@@ -46,7 +46,7 @@ class StreamService : Service(), ConnectChecker {
     private lateinit var rtmpDisplay: RtmpDisplay
     private var windowManager: WindowManager? = null
     private var floatingLayout: LinearLayout? = null
-    private var micButtonView: Button? = null
+    private var micButtonView: TextView? = null
     private var streamUrl: String = ""
     private val mediaPlayers = mutableListOf<MediaPlayer?>()
     private val mainHandler = Handler(Looper.getMainLooper())
@@ -285,19 +285,30 @@ class StreamService : Service(), ConnectChecker {
 
     private fun toggleMic() {
         if (!::rtmpDisplay.isInitialized) return
+        val density = resources.displayMetrics.density
         if (rtmpDisplay.isAudioMuted) {
             rtmpDisplay.enableAudio()
             isMicMutedState.value = false
             mainHandler.post {
-                micButtonView?.text = "🎤 Mic"
-                Toast.makeText(this, "🎤 Microphone Unmuted (ON)", Toast.LENGTH_SHORT).show()
+                micButtonView?.text = "🎤"
+                micButtonView?.background = GradientDrawable().apply {
+                    shape = GradientDrawable.OVAL
+                    setColor(Color.parseColor("#3310B981"))
+                    setStroke((1.5f * density).toInt(), Color.parseColor("#10B981"))
+                }
+                Toast.makeText(this, "🎤 Microphone Live", Toast.LENGTH_SHORT).show()
             }
         } else {
             rtmpDisplay.disableAudio()
             isMicMutedState.value = true
             mainHandler.post {
-                micButtonView?.text = "🔇 Muted"
-                Toast.makeText(this, "🔇 Microphone Muted (OFF)", Toast.LENGTH_SHORT).show()
+                micButtonView?.text = "🔇"
+                micButtonView?.background = GradientDrawable().apply {
+                    shape = GradientDrawable.OVAL
+                    setColor(Color.parseColor("#44EF4444"))
+                    setStroke((1.5f * density).toInt(), Color.parseColor("#EF4444"))
+                }
+                Toast.makeText(this, "🔇 Microphone Muted", Toast.LENGTH_SHORT).show()
             }
         }
     }
@@ -335,13 +346,13 @@ class StreamService : Service(), ConnectChecker {
             val arrowButton = TextView(this).apply {
                 text = "▶"
                 textSize = 15f
-                setTextColor(Color.WHITE)
+                setTextColor(Color.parseColor("#00E5FF"))
                 gravity = Gravity.CENTER
-                val sizePx = (42 * density).toInt()
+                val sizePx = (38 * density).toInt()
                 layoutParams = LinearLayout.LayoutParams(sizePx, sizePx)
                 background = GradientDrawable().apply {
                     shape = GradientDrawable.OVAL
-                    setColor(Color.parseColor("#EE1E1E2E"))
+                    setColor(Color.parseColor("#EE0F172A"))
                     setStroke((2 * density).toInt(), Color.parseColor("#00E5FF"))
                 }
             }
@@ -351,28 +362,51 @@ class StreamService : Service(), ConnectChecker {
                 orientation = LinearLayout.HORIZONTAL
                 gravity = Gravity.CENTER_VERTICAL
                 visibility = View.GONE
-                setPadding((6 * density).toInt(), 0, (6 * density).toInt(), 0)
+                setPadding((6 * density).toInt(), (4 * density).toInt(), (6 * density).toInt(), (4 * density).toInt())
                 background = GradientDrawable().apply {
-                    setColor(Color.parseColor("#EE1E1E2E"))
+                    setColor(Color.parseColor("#EE0F172A"))
                     cornerRadius = 24 * density
-                    setStroke((1.5f * density).toInt(), Color.parseColor("#55FFFFFF"))
+                    setStroke((1.5f * density).toInt(), Color.parseColor("#33FFFFFF"))
                 }
             }
 
-            val micBtn = Button(this).apply {
-                text = if (isMicMutedState.value) "🔇 Muted" else "🎤 Mic"
-                textSize = 12f
-                setPadding(18, 6, 18, 6)
+            fun createCircleButton(icon: String, bgTint: String, borderTint: String): TextView {
+                val sizePx = (36 * density).toInt()
+                return TextView(this).apply {
+                    text = icon
+                    textSize = 17f
+                    gravity = Gravity.CENTER
+                    layoutParams = LinearLayout.LayoutParams(sizePx, sizePx).apply {
+                        setMargins((4 * density).toInt(), 0, (4 * density).toInt(), 0)
+                    }
+                    background = GradientDrawable().apply {
+                        shape = GradientDrawable.OVAL
+                        setColor(Color.parseColor(bgTint))
+                        setStroke((1.5f * density).toInt(), Color.parseColor(borderTint))
+                    }
+                }
+            }
+
+            // 1. Attractive circular Mic button (NO text)
+            val isMuted = isMicMutedState.value
+            val micBtn = createCircleButton(
+                icon = if (isMuted) "🔇" else "🎤",
+                bgTint = if (isMuted) "#44EF4444" else "#3310B981",
+                borderTint = if (isMuted) "#EF4444" else "#10B981"
+            ).apply {
                 setOnClickListener {
                     toggleMic()
                 }
             }
             micButtonView = micBtn
 
-            val stopBtn = Button(this).apply {
-                text = "🔴 Stop"
-                textSize = 12f
-                setPadding(18, 6, 18, 6)
+            // 2. Attractive circular Stop button (NO text)
+            val stopBtn = createCircleButton(
+                icon = "⏹",
+                bgTint = "#44EF4444",
+                borderTint = "#EF4444"
+            ).apply {
+                setTextColor(Color.parseColor("#EF4444"))
                 setOnClickListener {
                     stopStream()
                     stopSelf()
