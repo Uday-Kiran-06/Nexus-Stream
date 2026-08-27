@@ -62,7 +62,43 @@ fun MainScreen(viewModel: StreamViewModel, modifier: Modifier = Modifier) {
     }
 
     val isStreaming by StreamService.isStreamingState
+    val isMicMuted by StreamService.isMicMutedState
     var durationText by remember { mutableStateOf("00:00:00") }
+
+    fun syncOverlaysWithService() {
+        if (!StreamService.isStreamingState.value) return
+        val intent = Intent(context, StreamService::class.java).apply {
+            action = "UPDATE_OVERLAYS"
+            val uris = arrayListOf<String>()
+            val scales = FloatArray(viewModel.overlays.size)
+            val xPos = FloatArray(viewModel.overlays.size)
+            val yPos = FloatArray(viewModel.overlays.size)
+            val chromaKeys = BooleanArray(viewModel.overlays.size)
+
+            viewModel.overlays.forEachIndexed { index, overlay ->
+                uris.add(overlay.uri)
+                scales[index] = overlay.scalePercent
+                xPos[index] = overlay.xPercent
+                yPos[index] = overlay.yPercent
+                chromaKeys[index] = overlay.chromaKey
+            }
+
+            putStringArrayListExtra("overlayUris", uris)
+            putExtra("overlayScales", scales)
+            putExtra("overlayX", xPos)
+            putExtra("overlayY", yPos)
+            putExtra("overlayChromaKeys", chromaKeys)
+        }
+        context.startService(intent)
+    }
+
+    // Automatically sync overlay changes (add, remove, move, resize, chroma) with live stream in real-time
+    LaunchedEffect(viewModel.overlays.map { "${it.id}_${it.xPercent}_${it.yPercent}_${it.scalePercent}_${it.chromaKey}" }) {
+        if (isStreaming) {
+            delay(150)
+            syncOverlaysWithService()
+        }
+    }
 
     LaunchedEffect(isStreaming) {
         if (isStreaming) {
@@ -311,6 +347,28 @@ fun MainScreen(viewModel: StreamViewModel, modifier: Modifier = Modifier) {
 
             // Streaming Control
             if (isStreaming) {
+                // Microphone Live Toggle Button
+                FilledTonalButton(
+                    onClick = {
+                        val intent = Intent(context, StreamService::class.java).apply { action = "TOGGLE_MIC" }
+                        context.startService(intent)
+                    },
+                    modifier = Modifier.fillMaxWidth().height(50.dp),
+                    shape = RoundedCornerShape(14.dp),
+                    colors = ButtonDefaults.filledTonalButtonColors(
+                        containerColor = if (isMicMuted) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.secondaryContainer
+                    )
+                ) {
+                    Text(
+                        text = if (isMicMuted) "🔇 Microphone: MUTED  (Tap to Unmute)" else "🎤 Microphone: LIVE  (Tap to Mute)",
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = if (isMicMuted) MaterialTheme.colorScheme.onErrorContainer else MaterialTheme.colorScheme.onSecondaryContainer
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
+
                 Button(
                     onClick = {
                         val intent = Intent(context, StreamService::class.java).apply { action = "STOP" }

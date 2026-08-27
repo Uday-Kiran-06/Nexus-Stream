@@ -15,7 +15,7 @@ import java.nio.FloatBuffer
  * with real-time green-screen (chroma key) removal.
  *
  * It removes green from the video overlay only, keeping the background screen
- * capture untouched.
+ * capture untouched. Coordinates are mapped top-down to match Android screen orientation.
  */
 class VideoChromaFilterRender(
     private val onSurfaceReady: (SurfaceTexture) -> Unit
@@ -56,9 +56,10 @@ class VideoChromaFilterRender(
                 return;
             }
 
-            // Map fragment coordinate to video-UV space
+            // Invert Y so that uOffsetY=0 is at TOP of screen and 1.0 is at BOTTOM
+            float topDownY = 1.0 - vTextureCoord.y;
             float vx = (vTextureCoord.x - uOffsetX) / max(uScaleX, 0.001);
-            float vy = (vTextureCoord.y - uOffsetY) / max(uScaleY, 0.001);
+            float vy = (topDownY - uOffsetY) / max(uScaleY, 0.001);
 
             // Only draw video within its bounding box
             if (vx < 0.0 || vx > 1.0 || vy < 0.0 || vy > 1.0) {
@@ -68,17 +69,19 @@ class VideoChromaFilterRender(
 
             vec4 video = texture2D(uVideo, vec2(vx, vy));
 
-            // Green-screen chroma key
-            float maxrb  = max(video.r, video.b);
-            float k      = clamp((video.g - maxrb) * uSensitive, 0.0, 1.0);
+            // Green difference: how much greener is it than red & blue
+            float maxrb = max(video.r, video.b);
+            float greenDiff = video.g - maxrb;
 
-            // Reduce green spill on edge pixels
-            float dg     = video.g;
-            video.g      = min(video.g, maxrb * 0.9);
-            video       += dg - video.g;
+            // Sensitivity controls cutoff threshold (higher sensitive = cuts more green)
+            float threshold = mix(0.18, 0.04, clamp(uSensitive, 0.0, 1.0));
+            float mask = smoothstep(threshold * 0.4, threshold, greenDiff);
 
-            // k=1 -> green (show screen), k=0 -> video content
-            gl_FragColor = mix(video, screen, k);
+            // Despill edge pixels by clamping green to maxrb without turning white
+            video.g = min(video.g, maxrb);
+
+            // mask = 1.0 -> green screen (show screen), mask = 0.0 -> video content
+            gl_FragColor = mix(video, screen, mask);
         }
     """.trimIndent()
 
@@ -120,10 +123,9 @@ class VideoChromaFilterRender(
     @Volatile var overlayScaleY  = 0.5f
     @Volatile var overlayOffsetX = 0f
     @Volatile var overlayOffsetY = 0f
-    @Volatile private var _sensitive = 0.35f
+    @Volatile private var _sensitive = 0.50f
 
     init {
-        // CRITICAL: Initialize matrices to Identity, otherwise gl_Position is multiplied by all-zeros!
         Matrix.setIdentityM(MVPMatrix, 0)
         Matrix.setIdentityM(STMatrix, 0)
     }
