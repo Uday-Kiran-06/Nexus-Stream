@@ -244,7 +244,7 @@ fun MainScreen(viewModel: StreamViewModel, modifier: Modifier = Modifier) {
                 Text("Add Media Overlay (Image/Video)", fontWeight = FontWeight.Bold)
             }
             
-            Spacer(modifier = Modifier.weight(1f))
+            Spacer(modifier = Modifier.height(24.dp))
             
             // Streaming Control
             if (isStreaming) {

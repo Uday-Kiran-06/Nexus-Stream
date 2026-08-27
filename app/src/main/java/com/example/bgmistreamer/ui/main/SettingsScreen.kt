@@ -2,6 +2,8 @@ package com.example.bgmistreamer.ui.main
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
@@ -21,7 +23,7 @@ fun SettingsScreen(viewModel: StreamViewModel, modifier: Modifier = Modifier) {
             .padding(horizontal = 24.dp)
     ) {
         Column(
-            modifier = Modifier.fillMaxSize().systemBarsPadding().padding(top = 24.dp)
+            modifier = Modifier.fillMaxSize().systemBarsPadding().padding(top = 24.dp).verticalScroll(rememberScrollState())
         ) {
             Text(
                 text = "Broadcast Settings",

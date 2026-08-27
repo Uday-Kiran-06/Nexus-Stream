@@ -10,8 +10,6 @@ import android.graphics.PixelFormat
 import android.os.Build
 import android.os.IBinder
 import android.view.Gravity
-import android.view.LayoutInflater
-import android.view.View
 import android.view.WindowManager
 import android.widget.Button
 import android.widget.Toast
@@ -32,14 +30,13 @@ class StreamService : Service(), ConnectChecker {
 
         val isStreamingState = mutableStateOf(false)
         val streamStartTime = mutableStateOf(0L)
-        
-        private val mediaPlayers = mutableListOf<MediaPlayer?>()
     }
 
     private lateinit var rtmpDisplay: RtmpDisplay
-    private lateinit var windowManager: WindowManager
-    private var overlayView: View? = null
+    private var windowManager: WindowManager? = null
+    private var overlayView: Button? = null
     private var streamUrl: String = ""
+    private val mediaPlayers = mutableListOf<MediaPlayer?>()
 
     override fun onCreate() {
         super.onCreate()
@@ -81,7 +78,7 @@ class StreamService : Service(), ConnectChecker {
                     "720p 30fps" -> listOf(if(isLandscape) 1280 else 720, if(isLandscape) 720 else 1280, 30, 2500 * 1024)
                     "1440p 60fps" -> listOf(if(isLandscape) 2560 else 1440, if(isLandscape) 1440 else 2560, 60, 9000 * 1024)
                     "4K 60fps" -> listOf(if(isLandscape) 3840 else 2160, if(isLandscape) 2160 else 3840, 60, 15000 * 1024)
-                    else -> listOf(if(isLandscape) 1920 else 1080, if(isLandscape) 1080 else 1920, 60, 4500 * 1024)
+                    else -> listOf(if(isLandscape) 1920 else 1080, if(isLandscape) 1080 else 1920, 60, 4000 * 1024) // 1080p 60fps ~4Mbps
                 }
 
                 val audioBitrate = 128 * 1024
@@ -102,7 +99,6 @@ class StreamService : Service(), ConnectChecker {
                     val scales = intent.getFloatArrayExtra("overlayScales")
                     val xPos = intent.getFloatArrayExtra("overlayX")
                     val yPos = intent.getFloatArrayExtra("overlayY")
-                    val useChromaKey = intent.getBooleanExtra("chromaKey", false)
                     
                     if (uris != null && scales != null && xPos != null && yPos != null) {
                         for (i in uris.indices) {
@@ -164,7 +160,6 @@ class StreamService : Service(), ConnectChecker {
     private fun showOverlay() {
         windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
         
-        // Example overlay implementation using a simple button
         val button = Button(this).apply {
             text = "Stop Stream"
             setOnClickListener {
@@ -181,7 +176,7 @@ class StreamService : Service(), ConnectChecker {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) 
                 WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY 
             else 
-                WindowManager.LayoutParams.TYPE_PHONE,
+                @Suppress("DEPRECATION") WindowManager.LayoutParams.TYPE_PHONE,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
             PixelFormat.TRANSLUCENT
         )
@@ -189,7 +184,7 @@ class StreamService : Service(), ConnectChecker {
         params.x = 100
         params.y = 100
 
-        windowManager.addView(overlayView, params)
+        windowManager?.addView(overlayView, params)
     }
 
     private fun stopStream() {
@@ -200,15 +195,15 @@ class StreamService : Service(), ConnectChecker {
         }
         
         mediaPlayers.forEach { 
-            it?.stop()
+            try { it?.stop() } catch (_: Exception) {}
             it?.release() 
         }
         mediaPlayers.clear()
         
-        if (overlayView != null) {
-            windowManager.removeView(overlayView)
-            overlayView = null
-        }
+        try {
+            overlayView?.let { windowManager?.removeView(it) }
+        } catch (_: Exception) {}
+        overlayView = null
     }
 
     override fun onDestroy() {
