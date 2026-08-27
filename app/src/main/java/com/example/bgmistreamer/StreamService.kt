@@ -60,7 +60,7 @@ class StreamService : Service(), ConnectChecker {
         }
 
         rtmpDisplay = RtmpDisplay(baseContext, true, this)
-        rtmpDisplay.glInterface.setForceRender(true)
+        rtmpDisplay.glInterface.setForceRender(true, 30)
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -223,28 +223,17 @@ class StreamService : Service(), ConnectChecker {
                                     inputStream?.close()
 
                                     if (bitmap != null) {
-                                        if (useChromaForThis) {
-                                            // Image with Chroma Key
-                                            val chromaFilter = com.pedro.encoder.input.gl.render.filters.ChromaFilterRender()
-                                            rtmpDisplay.glInterface.addFilter(chromaFilter)
-                                            mainHandler.postDelayed({
-                                                try {
-                                                    chromaFilter.setImage(bitmap)
-                                                    chromaFilter.setSensitive(0.35f)
-                                                } catch (e: Exception) { e.printStackTrace() }
-                                            }, 500)
-                                        } else {
-                                            // Standard Image overlay
-                                            val imageFilter = com.pedro.encoder.input.gl.render.filters.`object`.ImageObjectFilterRender()
-                                            rtmpDisplay.glInterface.addFilter(imageFilter)
-                                            mainHandler.postDelayed({
-                                                try {
-                                                    imageFilter.setImage(bitmap)
-                                                    imageFilter.setScale(scales[i] / 100f, scales[i] / 100f)
-                                                    imageFilter.setPosition(xPos[i] / 100f, yPos[i] / 100f)
-                                                } catch (e: Exception) { e.printStackTrace() }
-                                            }, 500)
-                                        }
+                                        // If chroma key is requested, remove green pixels in software to keep stream/game safe
+                                        val processedBitmap = if (useChromaForThis) removeGreenScreen(bitmap) else bitmap
+                                        val imageFilter = com.pedro.encoder.input.gl.render.filters.`object`.ImageObjectFilterRender()
+                                        rtmpDisplay.glInterface.addFilter(imageFilter)
+                                        mainHandler.postDelayed({
+                                            try {
+                                                imageFilter.setImage(processedBitmap)
+                                                imageFilter.setScale(scales[i] / 100f, scales[i] / 100f)
+                                                imageFilter.setPosition(xPos[i] / 100f, yPos[i] / 100f)
+                                            } catch (e: Exception) { e.printStackTrace() }
+                                        }, 500)
                                     }
                                 }
                             } catch (e: Exception) {
@@ -391,4 +380,25 @@ class StreamService : Service(), ConnectChecker {
     }
 
     override fun onAuthSuccess() { }
+
+    private fun removeGreenScreen(source: android.graphics.Bitmap, threshold: Float = 0.35f): android.graphics.Bitmap {
+        val output = source.copy(android.graphics.Bitmap.Config.ARGB_8888, true)
+        val width = output.width
+        val height = output.height
+        val pixels = IntArray(width * height)
+        output.getPixels(pixels, 0, width, 0, 0, width, height)
+        val intThreshold = (threshold * 80).toInt()
+        for (i in pixels.indices) {
+            val color = pixels[i]
+            val r = (color shr 16) and 0xFF
+            val g = (color shr 8) and 0xFF
+            val b = color and 0xFF
+            val maxRb = maxOf(r, b)
+            if (g > maxRb && (g - maxRb) > intThreshold) {
+                pixels[i] = 0 // Transparent
+            }
+        }
+        output.setPixels(pixels, 0, width, 0, 0, width, height)
+        return output
+    }
 }

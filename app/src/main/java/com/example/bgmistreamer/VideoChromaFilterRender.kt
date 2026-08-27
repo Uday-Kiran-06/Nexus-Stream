@@ -4,29 +4,23 @@ import android.content.Context
 import android.graphics.SurfaceTexture
 import android.opengl.GLES11Ext
 import android.opengl.GLES20
-import android.view.Surface
+import android.opengl.Matrix
 import com.pedro.encoder.input.gl.render.filters.BaseFilterRender
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.FloatBuffer
 
 /**
- * VideoChromaFilterRender — renders a looping MP4 video overlay over the stream
+ * VideoChromaFilterRender — renders a looping video overlay over the stream
  * with real-time green-screen (chroma key) removal.
  *
- * How it works:
- *  1. Creates an OES texture + SurfaceTexture that MediaPlayer writes video frames into.
- *  2. In drawFilter(), updates the OES texture and composites the video over the stream
- *     using a GLSL chroma-key shader (removes green pixels).
- *  3. Extends BaseFilterRender so RootEncoder's GlInterface.addFilter() handles it.
+ * It removes green from the video overlay only, keeping the background screen
+ * capture untouched.
  */
 class VideoChromaFilterRender(
     private val onSurfaceReady: (SurfaceTexture) -> Unit
 ) : BaseFilterRender() {
 
-    // ---- GLSL shaders -------------------------------------------------------
-
-    /** Same vertex format used by all RootEncoder object filters (object_vertex.glsl). */
     private val VERTEX_SHADER = """
         attribute vec4 aPosition;
         attribute vec4 aTextureCoord;
@@ -39,30 +33,28 @@ class VideoChromaFilterRender(
         }
     """.trimIndent()
 
-    /**
-     * Fragment shader:
-     *  - uSampler   = stream camera / screen texture (sampler2D, provided by base class)
-     *  - uVideo     = video frame OES texture (samplerExternalOES, we create)
-     *  - uSensitive = chroma key strength (0.0–1.0)
-     *  - uScaleX/Y  = scale of the video overlay (fraction of stream size)
-     *  - uOffsetX/Y = top-left position of the video overlay (fraction of stream size)
-     */
     private val FRAGMENT_SHADER = """
         #extension GL_OES_EGL_image_external : require
         precision mediump float;
 
-        uniform sampler2D         uSampler;
+        uniform sampler2D          uSampler;
         uniform samplerExternalOES uVideo;
         uniform float uSensitive;
         uniform float uScaleX;
         uniform float uScaleY;
         uniform float uOffsetX;
         uniform float uOffsetY;
+        uniform int   uHasFrame;
 
         varying vec2 vTextureCoord;
 
         void main() {
             vec4 screen = texture2D(uSampler, vTextureCoord);
+
+            if (uHasFrame == 0) {
+                gl_FragColor = screen;
+                return;
+            }
 
             // Map fragment coordinate to video-UV space
             float vx = (vTextureCoord.x - uOffsetX) / max(uScaleX, 0.001);
@@ -85,20 +77,21 @@ class VideoChromaFilterRender(
             video.g      = min(video.g, maxrb * 0.9);
             video       += dg - video.g;
 
-            // k=1 → green area (show stream), k=0 → non-green (show video)
+            // k=1 -> green (show screen), k=0 -> video content
             gl_FragColor = mix(video, screen, k);
         }
     """.trimIndent()
 
     // ---- GL state -----------------------------------------------------------
 
-    private var program   = 0
+    private var program = 0
     private var videoTexId = 0
     private var videoSurfaceTexture: SurfaceTexture? = null
+    @Volatile private var hasFrame = false
 
     // Attribute handles
-    private var aPositionHandle   = 0
-    private var aTexCoordHandle   = 0
+    private var aPositionHandle = 0
+    private var aTexCoordHandle = 0
 
     // Uniform handles
     private var uMVPHandle       = 0
@@ -110,6 +103,7 @@ class VideoChromaFilterRender(
     private var uScaleYHandle    = 0
     private var uOffsetXHandle   = 0
     private var uOffsetYHandle   = 0
+    private var uHasFrameHandle  = 0
 
     // Full-screen quad (position xy + tex uv)
     private val QUAD_COORDS = floatArrayOf(
@@ -121,16 +115,23 @@ class VideoChromaFilterRender(
     )
     private lateinit var quadBuffer: FloatBuffer
 
-    // Overlay placement (set via setScale / setOffset)
+    // Overlay placement
     @Volatile var overlayScaleX  = 0.5f
     @Volatile var overlayScaleY  = 0.5f
     @Volatile var overlayOffsetX = 0f
     @Volatile var overlayOffsetY = 0f
     @Volatile private var _sensitive = 0.35f
 
-    // ---- Lifecycle ----------------------------------------------------------
+    init {
+        // CRITICAL: Initialize matrices to Identity, otherwise gl_Position is multiplied by all-zeros!
+        Matrix.setIdentityM(MVPMatrix, 0)
+        Matrix.setIdentityM(STMatrix, 0)
+    }
 
     override fun initGlFilter(context: Context) {
+        Matrix.setIdentityM(MVPMatrix, 0)
+        Matrix.setIdentityM(STMatrix, 0)
+
         // Build quad VBO
         quadBuffer = ByteBuffer
             .allocateDirect(QUAD_COORDS.size * 4)
@@ -155,6 +156,7 @@ class VideoChromaFilterRender(
         uScaleYHandle    = GLES20.glGetUniformLocation(program, "uScaleY")
         uOffsetXHandle   = GLES20.glGetUniformLocation(program, "uOffsetX")
         uOffsetYHandle   = GLES20.glGetUniformLocation(program, "uOffsetY")
+        uHasFrameHandle  = GLES20.glGetUniformLocation(program, "uHasFrame")
 
         // Create OES texture for MediaPlayer video frames
         val texIds = IntArray(1)
@@ -170,19 +172,27 @@ class VideoChromaFilterRender(
 
         // Expose SurfaceTexture so MediaPlayer can render into it
         videoSurfaceTexture = SurfaceTexture(videoTexId).also { st ->
+            st.setOnFrameAvailableListener {
+                hasFrame = true
+            }
             onSurfaceReady(st)
         }
     }
 
     override fun drawFilter() {
-        // Pull the latest video frame into the OES texture
-        videoSurfaceTexture?.updateTexImage()
+        if (hasFrame) {
+            try {
+                videoSurfaceTexture?.updateTexImage()
+            } catch (e: Exception) {
+                // Ignore transient frame availability issues
+            }
+        }
 
         GLES20.glUseProgram(program)
 
         // --- bind camera/stream texture to unit 0 --------------------------
         GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
-        GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, previousTexId)   // base class field
+        GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, previousTexId)
         GLES20.glUniform1i(uSamplerHandle, 0)
 
         // --- bind video OES texture to unit 1 ------------------------------
@@ -198,15 +208,16 @@ class VideoChromaFilterRender(
         GLES20.glUniform1f(uScaleYHandle,    overlayScaleY)
         GLES20.glUniform1f(uOffsetXHandle,   overlayOffsetX)
         GLES20.glUniform1f(uOffsetYHandle,   overlayOffsetY)
+        GLES20.glUniform1i(uHasFrameHandle,  if (hasFrame) 1 else 0)
 
         // --- draw full-screen quad -----------------------------------------
-        val STRIDE = 4 * 4   // 4 floats × 4 bytes
+        val stride = 4 * 4 // 4 floats * 4 bytes
         quadBuffer.position(0)
-        GLES20.glVertexAttribPointer(aPositionHandle, 2, GLES20.GL_FLOAT, false, STRIDE, quadBuffer)
+        GLES20.glVertexAttribPointer(aPositionHandle, 2, GLES20.GL_FLOAT, false, stride, quadBuffer)
         GLES20.glEnableVertexAttribArray(aPositionHandle)
 
         quadBuffer.position(2)
-        GLES20.glVertexAttribPointer(aTexCoordHandle, 2, GLES20.GL_FLOAT, false, STRIDE, quadBuffer)
+        GLES20.glVertexAttribPointer(aTexCoordHandle, 2, GLES20.GL_FLOAT, false, stride, quadBuffer)
         GLES20.glEnableVertexAttribArray(aTexCoordHandle)
 
         GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, 4)
@@ -217,6 +228,7 @@ class VideoChromaFilterRender(
     }
 
     override fun release() {
+        hasFrame = false
         videoSurfaceTexture?.release()
         videoSurfaceTexture = null
         if (videoTexId != 0) {
@@ -229,15 +241,11 @@ class VideoChromaFilterRender(
         }
     }
 
-    // ---- Public setters (call from main thread, read on GL thread) ----------
-
-    /** scaleX and scaleY as fractions of stream width/height (0.0–1.0) */
     fun setOverlayScale(scaleX: Float, scaleY: Float) {
         overlayScaleX = scaleX
         overlayScaleY = scaleY
     }
 
-    /** offsetX and offsetY as top-left position fractions (0.0–1.0) */
     fun setOverlayOffset(offsetX: Float, offsetY: Float) {
         overlayOffsetX = offsetX
         overlayOffsetY = offsetY
@@ -246,8 +254,6 @@ class VideoChromaFilterRender(
     fun setSensitive(value: Float) {
         _sensitive = value.coerceIn(0f, 1f)
     }
-
-    // ---- GL helpers ---------------------------------------------------------
 
     private fun createProgram(vertSrc: String, fragSrc: String): Int {
         val vs = compileShader(GLES20.GL_VERTEX_SHADER, vertSrc)
