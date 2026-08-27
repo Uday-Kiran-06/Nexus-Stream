@@ -1,12 +1,15 @@
 package com.example.bgmistreamer.ui.main
 
+import android.Manifest
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.provider.Settings
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.ContextCompat
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -79,11 +82,15 @@ fun MainScreen(viewModel: StreamViewModel, modifier: Modifier = Modifier) {
         contract = ActivityResultContracts.StartActivityForResult()
     ) { result ->
         if (result.resultCode == android.app.Activity.RESULT_OK) {
+            val cleanBase = viewModel.rtmpUrl.value.trim().trimEnd('/')
+            val cleanKey = viewModel.streamKey.value.trim().trimStart('/')
+            val fullUrl = if (cleanKey.isEmpty()) cleanBase else "$cleanBase/$cleanKey"
+
             val intent = Intent(context, StreamService::class.java).apply {
                 action = "START_STREAM"
                 putExtra("resultCode", result.resultCode)
                 putExtra("data", result.data)
-                putExtra("url", viewModel.rtmpUrl.value + viewModel.streamKey.value)
+                putExtra("url", fullUrl)
                 putExtra("quality", viewModel.selectedQuality.value)
                 putExtra("isLandscape", viewModel.isLandscapeOrientation.value)
                 putExtra("chromaKey", viewModel.isChromaKeyEnabled.value)
@@ -114,6 +121,14 @@ fun MainScreen(viewModel: StreamViewModel, modifier: Modifier = Modifier) {
                 context.startService(intent)
             }
         }
+    }
+
+    // Audio Permission Launcher (Required for microphone capture during stream)
+    val audioPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        val mediaProjectionManager = context.getSystemService(android.content.Context.MEDIA_PROJECTION_SERVICE) as android.media.projection.MediaProjectionManager
+        mediaProjectionLauncher.launch(mediaProjectionManager.createScreenCaptureIntent())
     }
 
     val overlayPermissionLauncher = rememberLauncherForActivityResult(
@@ -310,15 +325,28 @@ fun MainScreen(viewModel: StreamViewModel, modifier: Modifier = Modifier) {
             } else {
                 Button(
                     onClick = {
+                        if (viewModel.rtmpUrl.value.isBlank() || viewModel.streamKey.value.isBlank()) {
+                            Toast.makeText(context, "Go to Settings → enter RTMP URL and Stream Key first", Toast.LENGTH_LONG).show()
+                            return@Button
+                        }
+
+                        // Check Overlay permission (optional, helpful for floating stop button)
                         if (!Settings.canDrawOverlays(context)) {
                             val intent = Intent(
                                 Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
                                 Uri.parse("package:${context.packageName}")
                             )
                             overlayPermissionLauncher.launch(intent)
-                            Toast.makeText(context, "Grant 'Display over other apps' permission then try again", Toast.LENGTH_LONG).show()
-                        } else if (viewModel.rtmpUrl.value.isBlank() || viewModel.streamKey.value.isBlank()) {
-                            Toast.makeText(context, "Go to Settings → enter RTMP URL and Stream Key first", Toast.LENGTH_LONG).show()
+                            Toast.makeText(context, "Optional: Grant 'Display over other apps' for floating controls", Toast.LENGTH_SHORT).show()
+                        }
+
+                        // Check microphone permission
+                        val hasAudioPerm = ContextCompat.checkSelfPermission(
+                            context, Manifest.permission.RECORD_AUDIO
+                        ) == PackageManager.PERMISSION_GRANTED
+
+                        if (!hasAudioPerm) {
+                            audioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
                         } else {
                             val mediaProjectionManager = context.getSystemService(android.content.Context.MEDIA_PROJECTION_SERVICE) as android.media.projection.MediaProjectionManager
                             mediaProjectionLauncher.launch(mediaProjectionManager.createScreenCaptureIntent())

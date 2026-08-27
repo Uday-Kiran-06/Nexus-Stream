@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <attr format="enum" name="aspectRatioMode">
+    <enum name="adjust" value="0"/>
+    <enum name="fill" value="1"/>
+    <enum name="none" value="2"/>
+  </attr>
+    <declare-styleable name="OpenGlView">
+    <attr name="aspectRatioMode"/>
+    <attr format="boolean" name="isFlipHorizontal"/>
+    <attr format="boolean" name="isFlipVertical"/>
+  </declare-styleable>
+</resources>
