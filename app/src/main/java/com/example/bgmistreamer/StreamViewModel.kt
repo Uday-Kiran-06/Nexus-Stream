@@ -12,9 +12,10 @@ import java.util.UUID
 data class OverlayItem(
     val id: String = UUID.randomUUID().toString(),
     val uri: String,
-    var xPercent: Float = 50f,
-    var yPercent: Float = 50f,
-    var scalePercent: Float = 30f
+    var xPercent: Float = 25f,
+    var yPercent: Float = 25f,
+    var scalePercent: Float = 30f,
+    var chromaKey: Boolean = false
 )
 
 class StreamViewModel(application: Application) : AndroidViewModel(application) {
@@ -87,6 +88,13 @@ class StreamViewModel(application: Application) : AndroidViewModel(application) 
         if (index != -1) {
             val item = overlays[index]
             overlays[index] = item.copy(scalePercent = scale)
+            saveSettings()
+        }
+    }
+    fun updateOverlayChromaKey(id: String, enabled: Boolean) {
+        val index = overlays.indexOfFirst { it.id == id }
+        if (index != -1) {
+            overlays[index] = overlays[index].copy(chromaKey = enabled)
             saveSettings()
         }
     }

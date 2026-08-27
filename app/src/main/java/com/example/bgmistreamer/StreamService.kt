@@ -82,7 +82,7 @@ class StreamService : Service(), ConnectChecker {
                 }
 
                 val audioBitrate = 128 * 1024
-                val sampleRate = 32000 // typical
+                val sampleRate = 44100 // YouTube requires 44100 or 48000
                 val isStereo = true
 
                 val videoPrepared = rtmpDisplay.prepareVideo(width, height, fps, videoBitrate, 0, 0)
@@ -99,14 +99,16 @@ class StreamService : Service(), ConnectChecker {
                     val scales = intent.getFloatArrayExtra("overlayScales")
                     val xPos = intent.getFloatArrayExtra("overlayX")
                     val yPos = intent.getFloatArrayExtra("overlayY")
-                    
+                    val chromaKeys = intent.getBooleanArrayExtra("overlayChromaKeys")
+
                     if (uris != null && scales != null && xPos != null && yPos != null) {
                         for (i in uris.indices) {
                             try {
                                 val uri = android.net.Uri.parse(uris[i])
                                 val mimeType = contentResolver.getType(uri)
                                 val isVideo = mimeType?.startsWith("video/") == true
-                                
+                                val useChromaForThis = chromaKeys?.getOrNull(i) ?: false
+
                                 if (isVideo) {
                                     val surfaceFilter = SurfaceFilterRender { surfaceTexture ->
                                         val mediaPlayer = MediaPlayer.create(baseContext, uri)
@@ -116,24 +118,41 @@ class StreamService : Service(), ConnectChecker {
                                         mediaPlayers.add(mediaPlayer)
                                     }
                                     rtmpDisplay.glInterface.addFilter(surfaceFilter)
-                                    surfaceFilter.setScale(scales[i], scales[i])
-                                    surfaceFilter.setPosition(xPos[i], yPos[i])
+                                    // setScale/setPosition must happen after GL init (small delay)
+                                    android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                                        try {
+                                            surfaceFilter.setScale(scales[i] / 100f, scales[i] / 100f)
+                                            surfaceFilter.setPosition(xPos[i] / 100f, yPos[i] / 100f)
+                                        } catch (e: Exception) { e.printStackTrace() }
+                                    }, 500)
                                 } else {
                                     val inputStream = contentResolver.openInputStream(uri)
                                     val bitmap = android.graphics.BitmapFactory.decodeStream(inputStream)
                                     inputStream?.close()
-                                    
+
                                     if (bitmap != null) {
-                                        if (useChromaKey) {
+                                        if (useChromaForThis) {
+                                            // ChromaFilterRender: removes green, composites image over stream
                                             val chromaFilter = com.pedro.encoder.input.gl.render.filters.ChromaFilterRender()
                                             rtmpDisplay.glInterface.addFilter(chromaFilter)
-                                            chromaFilter.setImage(bitmap)
+                                            // Must set image and sensitivity after GL thread initializes (~500ms)
+                                            android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                                                try {
+                                                    chromaFilter.setImage(bitmap)
+                                                    chromaFilter.setSensitive(0.35f) // 0.0–1.0; 0.35 removes most green
+                                                } catch (e: Exception) { e.printStackTrace() }
+                                            }, 500)
                                         } else {
                                             val imageFilter = com.pedro.encoder.input.gl.render.filters.`object`.ImageObjectFilterRender()
                                             rtmpDisplay.glInterface.addFilter(imageFilter)
-                                            imageFilter.setImage(bitmap)
-                                            imageFilter.setScale(scales[i], scales[i])
-                                            imageFilter.setPosition(xPos[i], yPos[i])
+                                            android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                                                try {
+                                                    imageFilter.setImage(bitmap)
+                                                    // scale: 0.0–1.0 (fraction of stream dimensions)
+                                                    imageFilter.setScale(scales[i] / 100f, scales[i] / 100f)
+                                                    imageFilter.setPosition(xPos[i] / 100f, yPos[i] / 100f)
+                                                } catch (e: Exception) { e.printStackTrace() }
+                                            }, 500)
                                         }
                                     }
                                 }

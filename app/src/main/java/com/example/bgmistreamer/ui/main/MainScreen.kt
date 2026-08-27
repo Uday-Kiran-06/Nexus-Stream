@@ -22,11 +22,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -34,13 +36,15 @@ import coil.compose.AsyncImage
 import com.example.bgmistreamer.StreamService
 import com.example.bgmistreamer.StreamViewModel
 import kotlinx.coroutines.delay
+import kotlin.math.roundToInt
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MainScreen(viewModel: StreamViewModel, modifier: Modifier = Modifier) {
     val context = LocalContext.current
+    val density = LocalDensity.current
     var canvasSize by remember { mutableStateOf(IntSize.Zero) }
-    
+
     // Media Picker (Image + Video)
     val mediaPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument()
@@ -56,7 +60,7 @@ fun MainScreen(viewModel: StreamViewModel, modifier: Modifier = Modifier) {
 
     val isStreaming by StreamService.isStreamingState
     var durationText by remember { mutableStateOf("00:00:00") }
-    
+
     LaunchedEffect(isStreaming) {
         if (isStreaming) {
             while (true) {
@@ -83,24 +87,26 @@ fun MainScreen(viewModel: StreamViewModel, modifier: Modifier = Modifier) {
                 putExtra("quality", viewModel.selectedQuality.value)
                 putExtra("isLandscape", viewModel.isLandscapeOrientation.value)
                 putExtra("chromaKey", viewModel.isChromaKeyEnabled.value)
-                
-                // Pack overlay URIs and configurations
+
                 val uris = arrayListOf<String>()
                 val scales = FloatArray(viewModel.overlays.size)
                 val xPos = FloatArray(viewModel.overlays.size)
                 val yPos = FloatArray(viewModel.overlays.size)
-                
+                val chromaKeys = BooleanArray(viewModel.overlays.size)
+
                 viewModel.overlays.forEachIndexed { index, overlay ->
                     uris.add(overlay.uri)
                     scales[index] = overlay.scalePercent
                     xPos[index] = overlay.xPercent
                     yPos[index] = overlay.yPercent
+                    chromaKeys[index] = overlay.chromaKey
                 }
-                
+
                 putStringArrayListExtra("overlayUris", uris)
                 putExtra("overlayScales", scales)
                 putExtra("overlayX", xPos)
                 putExtra("overlayY", yPos)
+                putExtra("overlayChromaKeys", chromaKeys)
             }
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 context.startForegroundService(intent)
@@ -109,7 +115,7 @@ fun MainScreen(viewModel: StreamViewModel, modifier: Modifier = Modifier) {
             }
         }
     }
-    
+
     val overlayPermissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.StartActivityForResult()
     ) { }
@@ -121,7 +127,11 @@ fun MainScreen(viewModel: StreamViewModel, modifier: Modifier = Modifier) {
             .padding(horizontal = 16.dp)
     ) {
         Column(
-            modifier = Modifier.fillMaxSize().systemBarsPadding().padding(top = 16.dp).verticalScroll(rememberScrollState()),
+            modifier = Modifier
+                .fillMaxSize()
+                .systemBarsPadding()
+                .padding(top = 16.dp)
+                .verticalScroll(rememberScrollState()),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             Text(
@@ -131,8 +141,9 @@ fun MainScreen(viewModel: StreamViewModel, modifier: Modifier = Modifier) {
                 fontWeight = FontWeight.Bold,
                 modifier = Modifier.padding(bottom = 16.dp)
             )
-            
+
             // 16:9 Canvas Layout Editor
+            // overlayCanvas is a NON-scrollable Box so gestures work correctly
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -149,103 +160,140 @@ fun MainScreen(viewModel: StreamViewModel, modifier: Modifier = Modifier) {
                 Box(modifier = Modifier.fillMaxSize().background(Color.DarkGray)) {
                     Text("Game Screen", color = Color.White, modifier = Modifier.align(Alignment.Center))
                 }
-                
-                // Overlays
-                viewModel.overlays.forEach { overlay ->
-                    // Calculate absolute positions from percentage dynamically
-                    val offsetX = if (canvasSize.width > 0) (overlay.xPercent / 100f * canvasSize.width) else 0f
-                    val offsetY = if (canvasSize.height > 0) (overlay.yPercent / 100f * canvasSize.height) else 0f
-                    val scale = overlay.scalePercent / 100f * 3f // 3x multiplier for visibility in small canvas
-                    
-                    val imageRequest = coil.request.ImageRequest.Builder(context)
-                        .data(Uri.parse(overlay.uri))
-                        .decoderFactory(coil.decode.VideoFrameDecoder.Factory())
-                        .build()
-                        
-                    AsyncImage(
-                        model = imageRequest,
-                        contentDescription = "Overlay",
-                        modifier = Modifier
-                            .graphicsLayer(
-                                translationX = offsetX,
-                                translationY = offsetY,
-                                scaleX = scale,
-                                scaleY = scale
-                            )
-                            .size(100.dp) // Base size, scaled up/down
-                            .pointerInput(overlay.id) {
-                                detectTransformGestures { _, pan, zoom, _ ->
-                                    if (canvasSize.width > 0 && canvasSize.height > 0) {
-                                        val newXPercent = ((offsetX + pan.x) / canvasSize.width) * 100f
-                                        val newYPercent = ((offsetY + pan.y) / canvasSize.height) * 100f
-                                        val newScalePercent = ((scale * zoom) / 3f) * 100f
-                                        
+
+                // Overlays — using offset() so touch hit area matches visual position
+                if (canvasSize.width > 0 && canvasSize.height > 0) {
+                    viewModel.overlays.forEach { overlay ->
+                        // Overlay size is a % of canvas width
+                        val overlayWidthPx = (overlay.scalePercent / 100f * canvasSize.width).roundToInt()
+                        val overlayHeightPx = (overlay.scalePercent / 100f * canvasSize.height).roundToInt()
+
+                        // Position: xPercent/yPercent is top-left corner as % of canvas
+                        val offsetXPx = ((overlay.xPercent / 100f) * canvasSize.width).roundToInt()
+                            .coerceIn(0, (canvasSize.width - overlayWidthPx).coerceAtLeast(0))
+                        val offsetYPx = ((overlay.yPercent / 100f) * canvasSize.height).roundToInt()
+                            .coerceIn(0, (canvasSize.height - overlayHeightPx).coerceAtLeast(0))
+
+                        val overlayWidthDp = with(density) { overlayWidthPx.toDp() }
+                        val overlayHeightDp = with(density) { overlayHeightPx.toDp() }
+
+                        val imageRequest = coil.request.ImageRequest.Builder(context)
+                            .data(Uri.parse(overlay.uri))
+                            .decoderFactory(coil.decode.VideoFrameDecoder.Factory())
+                            .build()
+
+                        AsyncImage(
+                            model = imageRequest,
+                            contentDescription = "Overlay",
+                            contentScale = ContentScale.Fit,
+                            modifier = Modifier
+                                .offset { IntOffset(offsetXPx, offsetYPx) }
+                                .size(width = overlayWidthDp, height = overlayHeightDp)
+                                .pointerInput(overlay.id) {
+                                    detectTransformGestures { _, pan, zoom, _ ->
+                                        val newXPercent = ((offsetXPx + pan.x) / canvasSize.width * 100f)
+                                            .coerceIn(0f, 100f)
+                                        val newYPercent = ((offsetYPx + pan.y) / canvasSize.height * 100f)
+                                            .coerceIn(0f, 100f)
+                                        val newScale = (overlay.scalePercent * zoom)
+                                            .coerceIn(5f, 100f)
                                         viewModel.updateOverlayPosition(overlay.id, newXPercent, newYPercent)
-                                        viewModel.updateOverlayScale(overlay.id, newScalePercent)
+                                        viewModel.updateOverlayScale(overlay.id, newScale)
                                     }
                                 }
-                            }
-                            .pointerInput(overlay.id + "_tap") {
-                                detectTapGestures(
-                                    onDoubleTap = {
-                                        viewModel.removeOverlay(overlay.id)
-                                    }
-                                )
-                            }
-                    )
+                                .pointerInput(overlay.id + "_tap") {
+                                    detectTapGestures(
+                                        onDoubleTap = {
+                                            viewModel.removeOverlay(overlay.id)
+                                        }
+                                    )
+                                }
+                        )
+                    }
                 }
             }
-            
+
             Spacer(modifier = Modifier.height(8.dp))
-            Text("Tip: Pinch to scale. Drag to move. Double-tap to delete.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            
-            // List of overlays with controls
+            Text(
+                "Drag to move • Pinch to scale • Double-tap to delete",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+
+            // Active overlay list with quick controls
             if (viewModel.overlays.isNotEmpty()) {
                 Spacer(modifier = Modifier.height(16.dp))
                 Text("Active Overlays", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                 Spacer(modifier = Modifier.height(8.dp))
-                
+
                 Column(modifier = Modifier.fillMaxWidth()) {
                     viewModel.overlays.forEachIndexed { index, overlay ->
-                        Row(
+                        Card(
                             modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
-                            verticalAlignment = Alignment.CenterVertically
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
                         ) {
-                            Text("Overlay ${index + 1}", modifier = Modifier.weight(1f))
-                            OutlinedButton(
-                                onClick = {
-                                    viewModel.updateOverlayPosition(overlay.id, 0f, 0f)
-                                    viewModel.updateOverlayScale(overlay.id, 100f)
-                                },
-                                modifier = Modifier.padding(end = 8.dp)
-                            ) {
-                                Text("Fit Screen")
-                            }
-                            OutlinedButton(
-                                onClick = {
-                                    viewModel.updateOverlayPosition(overlay.id, 50f, 50f)
-                                    viewModel.updateOverlayScale(overlay.id, 30f)
+                            Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp)) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        "Overlay ${index + 1}",
+                                        modifier = Modifier.weight(1f),
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                    OutlinedButton(
+                                        onClick = {
+                                            viewModel.updateOverlayPosition(overlay.id, 0f, 0f)
+                                            viewModel.updateOverlayScale(overlay.id, 100f)
+                                        },
+                                        modifier = Modifier.padding(end = 8.dp)
+                                    ) { Text("Fit") }
+                                    OutlinedButton(
+                                        onClick = {
+                                            viewModel.updateOverlayPosition(overlay.id, 25f, 25f)
+                                            viewModel.updateOverlayScale(overlay.id, 30f)
+                                        }
+                                    ) { Text("Reset") }
+                                    IconButton(onClick = { viewModel.removeOverlay(overlay.id) }) {
+                                        Text("✕", color = MaterialTheme.colorScheme.error)
+                                    }
                                 }
-                            ) {
-                                Text("Reset")
+                                // Chroma Key toggle (only for images — green screen removal)
+                                Row(
+                                    modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        "🟢 Chroma Key (Green Screen)",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        modifier = Modifier.weight(1f),
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                    Switch(
+                                        checked = overlay.chromaKey,
+                                        onCheckedChange = { viewModel.updateOverlayChromaKey(overlay.id, it) }
+                                    )
+                                }
                             }
                         }
                     }
                 }
             }
-            
+
             Spacer(modifier = Modifier.height(24.dp))
-            
+
             Button(
                 onClick = { mediaPickerLauncher.launch(arrayOf("image/*", "video/*")) },
                 modifier = Modifier.fillMaxWidth().height(56.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondary)
             ) {
-                Text("Add Media Overlay (Image/Video)", fontWeight = FontWeight.Bold)
+                Text("Add Media Overlay (Image / Video)", fontWeight = FontWeight.Bold)
             }
-            
+
             Spacer(modifier = Modifier.height(24.dp))
-            
+
             // Streaming Control
             if (isStreaming) {
                 Button(
@@ -257,10 +305,9 @@ fun MainScreen(viewModel: StreamViewModel, modifier: Modifier = Modifier) {
                     shape = RoundedCornerShape(16.dp),
                     colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
                 ) {
-                    Text(durationText, fontSize = 24.sp, fontWeight = FontWeight.ExtraBold)
+                    Text("🔴  $durationText  — Tap to Stop", fontSize = 20.sp, fontWeight = FontWeight.ExtraBold)
                 }
             } else {
-                // Go Live Button
                 Button(
                     onClick = {
                         if (!Settings.canDrawOverlays(context)) {
@@ -269,8 +316,9 @@ fun MainScreen(viewModel: StreamViewModel, modifier: Modifier = Modifier) {
                                 Uri.parse("package:${context.packageName}")
                             )
                             overlayPermissionLauncher.launch(intent)
+                            Toast.makeText(context, "Grant 'Display over other apps' permission then try again", Toast.LENGTH_LONG).show()
                         } else if (viewModel.rtmpUrl.value.isBlank() || viewModel.streamKey.value.isBlank()) {
-                            Toast.makeText(context, "Please configure RTMP URL and Stream Key first", Toast.LENGTH_LONG).show()
+                            Toast.makeText(context, "Go to Settings → enter RTMP URL and Stream Key first", Toast.LENGTH_LONG).show()
                         } else {
                             val mediaProjectionManager = context.getSystemService(android.content.Context.MEDIA_PROJECTION_SERVICE) as android.media.projection.MediaProjectionManager
                             mediaProjectionLauncher.launch(mediaProjectionManager.createScreenCaptureIntent())
@@ -283,22 +331,8 @@ fun MainScreen(viewModel: StreamViewModel, modifier: Modifier = Modifier) {
                     Text("GO LIVE", fontSize = 20.sp, fontWeight = FontWeight.ExtraBold)
                 }
             }
-            
+
             Spacer(modifier = Modifier.height(16.dp))
-            
-            OutlinedButton(
-                onClick = {
-                    val intent = Intent(context, StreamService::class.java).apply {
-                        action = "STOP"
-                    }
-                    context.startService(intent)
-                },
-                modifier = Modifier.fillMaxWidth().height(56.dp).padding(bottom = 16.dp),
-                shape = RoundedCornerShape(16.dp),
-                colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error)
-            ) {
-                Text("End Broadcast", fontSize = 16.sp, fontWeight = FontWeight.Bold)
-            }
         }
     }
 }
