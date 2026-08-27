@@ -365,18 +365,20 @@ class StreamService : Service(), ConnectChecker {
                 gravity = Gravity.CENTER_VERTICAL
             }
 
-            // Small circular toggle button with arrow (hidden options by default)
+            // Circular toggle button matching user's image with transparent glass styling
             val arrowButton = TextView(this).apply {
-                text = "▶"
-                textSize = 15f
-                setTextColor(Color.parseColor("#00E5FF"))
+                text = "❯"
+                textSize = 18f
+                setTextColor(Color.WHITE)
                 gravity = Gravity.CENTER
-                val sizePx = (38 * density).toInt()
+                alpha = 0.40f // Semi-transparent by default so game is visible beneath
+                val sizePx = (40 * density).toInt()
                 layoutParams = LinearLayout.LayoutParams(sizePx, sizePx)
                 background = GradientDrawable().apply {
                     shape = GradientDrawable.OVAL
-                    setColor(Color.parseColor("#EE0F172A"))
-                    setStroke((2 * density).toInt(), Color.parseColor("#00E5FF"))
+                    // Translucent lime-green matching user image with glass transparency
+                    setColor(Color.parseColor("#5522C55E"))
+                    setStroke((2 * density).toInt(), Color.parseColor("#884ADE80"))
                 }
             }
 
@@ -387,9 +389,9 @@ class StreamService : Service(), ConnectChecker {
                 visibility = View.GONE
                 setPadding((6 * density).toInt(), (4 * density).toInt(), (6 * density).toInt(), (4 * density).toInt())
                 background = GradientDrawable().apply {
-                    setColor(Color.parseColor("#EE0F172A"))
+                    setColor(Color.parseColor("#CC0F172A"))
                     cornerRadius = 24 * density
-                    setStroke((1.5f * density).toInt(), Color.parseColor("#33FFFFFF"))
+                    setStroke((1.5f * density).toInt(), Color.parseColor("#44FFFFFF"))
                 }
             }
 
@@ -454,6 +456,7 @@ class StreamService : Service(), ConnectChecker {
                         initialTouchX = event.rawX
                         initialTouchY = event.rawY
                         isClick = true
+                        arrowButton.alpha = 0.85f
                         true
                     }
                     MotionEvent.ACTION_MOVE -> {
@@ -472,11 +475,17 @@ class StreamService : Service(), ConnectChecker {
                             // Toggle expand/collapse on click
                             isOverlayExpanded = !isOverlayExpanded
                             if (isOverlayExpanded) {
-                                arrowButton.text = "◀"
+                                arrowButton.text = "❮"
+                                arrowButton.alpha = 1.0f
                                 optionsLayout.visibility = View.VISIBLE
                             } else {
-                                arrowButton.text = "▶"
+                                arrowButton.text = "❯"
+                                arrowButton.alpha = 0.40f
                                 optionsLayout.visibility = View.GONE
+                            }
+                        } else {
+                            if (!isOverlayExpanded) {
+                                arrowButton.alpha = 0.40f
                             }
                         }
                         true
