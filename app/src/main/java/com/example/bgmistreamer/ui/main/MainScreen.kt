@@ -12,6 +12,8 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -119,7 +121,7 @@ fun MainScreen(viewModel: StreamViewModel, modifier: Modifier = Modifier) {
             .padding(horizontal = 16.dp)
     ) {
         Column(
-            modifier = Modifier.fillMaxSize().systemBarsPadding().padding(top = 16.dp),
+            modifier = Modifier.fillMaxSize().systemBarsPadding().padding(top = 16.dp).verticalScroll(rememberScrollState()),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             Text(
