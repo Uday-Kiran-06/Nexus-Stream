@@ -197,6 +197,41 @@ fun MainScreen(viewModel: StreamViewModel, modifier: Modifier = Modifier) {
             Spacer(modifier = Modifier.height(8.dp))
             Text("Tip: Pinch to scale. Drag to move. Double-tap to delete.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             
+            // List of overlays with controls
+            if (viewModel.overlays.isNotEmpty()) {
+                Spacer(modifier = Modifier.height(16.dp))
+                Text("Active Overlays", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                Spacer(modifier = Modifier.height(8.dp))
+                
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    viewModel.overlays.forEachIndexed { index, overlay ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text("Overlay ${index + 1}", modifier = Modifier.weight(1f))
+                            OutlinedButton(
+                                onClick = {
+                                    viewModel.updateOverlayPosition(overlay.id, 0f, 0f)
+                                    viewModel.updateOverlayScale(overlay.id, 100f)
+                                },
+                                modifier = Modifier.padding(end = 8.dp)
+                            ) {
+                                Text("Fit Screen")
+                            }
+                            OutlinedButton(
+                                onClick = {
+                                    viewModel.updateOverlayPosition(overlay.id, 50f, 50f)
+                                    viewModel.updateOverlayScale(overlay.id, 30f)
+                                }
+                            ) {
+                                Text("Reset")
+                            }
+                        }
+                    }
+                }
+            }
+            
             Spacer(modifier = Modifier.height(24.dp))
             
             Button(

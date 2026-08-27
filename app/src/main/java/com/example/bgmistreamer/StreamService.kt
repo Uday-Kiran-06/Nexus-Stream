@@ -88,8 +88,10 @@ class StreamService : Service(), ConnectChecker {
                 val sampleRate = 32000 // typical
                 val isStereo = true
 
-                if (rtmpDisplay.prepareVideo(width, height, fps, videoBitrate, 0, 0) &&
-                    rtmpDisplay.prepareAudio(audioBitrate, sampleRate, isStereo, true, true)) {
+                val videoPrepared = rtmpDisplay.prepareVideo(width, height, fps, videoBitrate, 0, 0)
+                val audioPrepared = rtmpDisplay.prepareAudio(audioBitrate, sampleRate, isStereo, false, false)
+
+                if (videoPrepared && audioPrepared) {
                     
                     rtmpDisplay.startStream(streamUrl)
                     isStreamingState.value = true
@@ -148,7 +150,10 @@ class StreamService : Service(), ConnectChecker {
                     updateNotification("Streaming to $streamUrl")
                     showOverlay()
                 } else {
-                    Toast.makeText(this, "Error preparing stream, unsupported parameters", Toast.LENGTH_SHORT).show()
+                    val errorMsg = if (!videoPrepared && !audioPrepared) "Video and Audio unsupported"
+                                   else if (!videoPrepared) "Video resolution/fps unsupported"
+                                   else "Audio settings unsupported"
+                    Toast.makeText(this, "Error preparing stream: $errorMsg", Toast.LENGTH_LONG).show()
                     stopSelf()
                 }
             }
