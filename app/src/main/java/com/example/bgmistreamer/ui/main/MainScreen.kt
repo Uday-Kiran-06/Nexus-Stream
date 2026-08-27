@@ -217,19 +217,43 @@ fun MainScreen(viewModel: StreamViewModel, modifier: Modifier = Modifier) {
                 .verticalScroll(rememberScrollState()),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
+            val (physW, physH) = remember {
+                val wm = context.getSystemService(android.content.Context.WINDOW_SERVICE) as android.view.WindowManager
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                    val bounds = wm.maximumWindowMetrics.bounds
+                    bounds.width() to bounds.height()
+                } else {
+                    val dm = android.util.DisplayMetrics()
+                    @Suppress("DEPRECATION")
+                    wm.defaultDisplay.getRealMetrics(dm)
+                    dm.widthPixels to dm.heightPixels
+                }
+            }
+            val isLandscape = viewModel.isLandscapeOrientation.value
+            val deviceRatio = maxOf(physW, physH).toFloat() / minOf(physW, physH).toFloat().coerceAtLeast(1f)
+            val canvasRatio = if (isLandscape) deviceRatio else (1f / deviceRatio)
+
             Text(
                 text = "Live Studio",
                 style = MaterialTheme.typography.headlineMedium,
                 color = MaterialTheme.colorScheme.primary,
                 fontWeight = FontWeight.Bold,
-                modifier = Modifier.padding(bottom = 16.dp)
+                modifier = Modifier.padding(bottom = 4.dp)
             )
 
-            // 16:9 Canvas Layout Editor with Movable Dashed Screen and Overlay Previews
+            Text(
+                text = "Mobile Screen Ratio: ${String.format("%.2f", deviceRatio)}:1 (Edge-to-Edge • No Black Bars)",
+                style = MaterialTheme.typography.bodySmall,
+                color = Color(0xFF00E5FF),
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.padding(bottom = 14.dp)
+            )
+
+            // Mobile Screen Canvas Layout Editor (Exact native aspect ratio — NO black bars)
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .aspectRatio(16f / 9f)
+                    .aspectRatio(canvasRatio)
                     .clip(RoundedCornerShape(12.dp))
                     .background(Color(0xFF0B1120))
                     .border(2.dp, Color(0xFF334155), RoundedCornerShape(12.dp))
