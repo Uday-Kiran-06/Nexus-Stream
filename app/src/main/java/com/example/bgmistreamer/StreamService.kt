@@ -110,21 +110,47 @@ class StreamService : Service(), ConnectChecker {
                                 val useChromaForThis = chromaKeys?.getOrNull(i) ?: false
 
                                 if (isVideo) {
-                                    val surfaceFilter = SurfaceFilterRender { surfaceTexture ->
-                                        val mediaPlayer = MediaPlayer.create(baseContext, uri)
-                                        mediaPlayer?.setSurface(Surface(surfaceTexture))
-                                        mediaPlayer?.isLooping = true
-                                        mediaPlayer?.start()
-                                        mediaPlayers.add(mediaPlayer)
+                                    if (useChromaForThis) {
+                                        // Video + chroma key: custom OES shader with green-screen removal
+                                        val videoChromaFilter = VideoChromaFilterRender { surfaceTexture ->
+                                            val mediaPlayer = android.media.MediaPlayer.create(baseContext, uri)
+                                            mediaPlayer?.setSurface(Surface(surfaceTexture))
+                                            mediaPlayer?.isLooping = true
+                                            mediaPlayer?.start()
+                                            mediaPlayers.add(mediaPlayer)
+                                        }
+                                        videoChromaFilter.setSensitive(0.35f)
+                                        rtmpDisplay.glInterface.addFilter(videoChromaFilter)
+                                        // Apply scale/offset after GL thread initializes
+                                        android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                                            try {
+                                                videoChromaFilter.setOverlayScale(
+                                                    scales[i] / 100f,
+                                                    scales[i] / 100f
+                                                )
+                                                videoChromaFilter.setOverlayOffset(
+                                                    xPos[i] / 100f,
+                                                    yPos[i] / 100f
+                                                )
+                                            } catch (e: Exception) { e.printStackTrace() }
+                                        }, 600)
+                                    } else {
+                                        // Plain video overlay (no chroma key)
+                                        val surfaceFilter = SurfaceFilterRender { surfaceTexture ->
+                                            val mediaPlayer = android.media.MediaPlayer.create(baseContext, uri)
+                                            mediaPlayer?.setSurface(Surface(surfaceTexture))
+                                            mediaPlayer?.isLooping = true
+                                            mediaPlayer?.start()
+                                            mediaPlayers.add(mediaPlayer)
+                                        }
+                                        rtmpDisplay.glInterface.addFilter(surfaceFilter)
+                                        android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                                            try {
+                                                surfaceFilter.setScale(scales[i] / 100f, scales[i] / 100f)
+                                                surfaceFilter.setPosition(xPos[i] / 100f, yPos[i] / 100f)
+                                            } catch (e: Exception) { e.printStackTrace() }
+                                        }, 500)
                                     }
-                                    rtmpDisplay.glInterface.addFilter(surfaceFilter)
-                                    // setScale/setPosition must happen after GL init (small delay)
-                                    android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
-                                        try {
-                                            surfaceFilter.setScale(scales[i] / 100f, scales[i] / 100f)
-                                            surfaceFilter.setPosition(xPos[i] / 100f, yPos[i] / 100f)
-                                        } catch (e: Exception) { e.printStackTrace() }
-                                    }, 500)
                                 } else {
                                     val inputStream = contentResolver.openInputStream(uri)
                                     val bitmap = android.graphics.BitmapFactory.decodeStream(inputStream)
