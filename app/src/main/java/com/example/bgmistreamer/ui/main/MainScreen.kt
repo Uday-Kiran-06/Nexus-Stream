@@ -217,22 +217,6 @@ fun MainScreen(viewModel: StreamViewModel, modifier: Modifier = Modifier) {
                 .verticalScroll(rememberScrollState()),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            val (physW, physH) = remember {
-                val wm = context.getSystemService(android.content.Context.WINDOW_SERVICE) as android.view.WindowManager
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                    val bounds = wm.maximumWindowMetrics.bounds
-                    bounds.width() to bounds.height()
-                } else {
-                    val dm = android.util.DisplayMetrics()
-                    @Suppress("DEPRECATION")
-                    wm.defaultDisplay.getRealMetrics(dm)
-                    dm.widthPixels to dm.heightPixels
-                }
-            }
-            val isLandscape = viewModel.isLandscapeOrientation.value
-            val deviceRatio = maxOf(physW, physH).toFloat() / minOf(physW, physH).toFloat().coerceAtLeast(1f)
-            val canvasRatio = if (isLandscape) deviceRatio else (1f / deviceRatio)
-
             Text(
                 text = "Live Studio",
                 style = MaterialTheme.typography.headlineMedium,
@@ -242,18 +226,18 @@ fun MainScreen(viewModel: StreamViewModel, modifier: Modifier = Modifier) {
             )
 
             Text(
-                text = "Mobile Screen Ratio: ${String.format("%.2f", deviceRatio)}:1 (Edge-to-Edge • No Black Bars)",
+                text = "Preview: 16:9 • Mobile Screen: 2.17:1 • Overlays: 16:9",
                 style = MaterialTheme.typography.bodySmall,
                 color = Color(0xFF00E5FF),
                 fontWeight = FontWeight.SemiBold,
                 modifier = Modifier.padding(bottom = 14.dp)
             )
 
-            // Mobile Screen Canvas Layout Editor (Exact native aspect ratio — NO black bars)
+            // 16:9 Canvas Layout Editor
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .aspectRatio(canvasRatio)
+                    .aspectRatio(16f / 9f)
                     .clip(RoundedCornerShape(12.dp))
                     .background(Color(0xFF0B1120))
                     .border(2.dp, Color(0xFF334155), RoundedCornerShape(12.dp))
@@ -263,9 +247,10 @@ fun MainScreen(viewModel: StreamViewModel, modifier: Modifier = Modifier) {
                     }
             ) {
                 if (canvasSize.width > 0 && canvasSize.height > 0) {
-                    // 1. Mobile Game Screen Preview (Movable & Resizable with Dashed Border)
+                    // 1. Mobile Game Screen Preview (Exact 2.17:1 Aspect Ratio)
+                    val GAME_SCREEN_ASPECT_RATIO = 2.17f
                     val gameWidthPx = (viewModel.gameScreenScalePercent.value / 100f * canvasSize.width).roundToInt()
-                    val gameHeightPx = (viewModel.gameScreenScalePercent.value / 100f * canvasSize.height).roundToInt()
+                    val gameHeightPx = (gameWidthPx / GAME_SCREEN_ASPECT_RATIO).roundToInt()
                     val gameOffsetXPx = ((viewModel.gameScreenXPercent.value / 100f) * canvasSize.width).roundToInt()
                         .coerceIn(0, (canvasSize.width - gameWidthPx).coerceAtLeast(0))
                     val gameOffsetYPx = ((viewModel.gameScreenYPercent.value / 100f) * canvasSize.height).roundToInt()
@@ -307,13 +292,13 @@ fun MainScreen(viewModel: StreamViewModel, modifier: Modifier = Modifier) {
                             horizontalAlignment = Alignment.CenterHorizontally
                         ) {
                             Text(
-                                "📱 Mobile Game Screen",
+                                "📱 Mobile Game Screen (2.17:1)",
                                 color = if (isGameSelected) Color(0xFF00E5FF) else Color(0xCCFFFFFF),
                                 fontWeight = FontWeight.Bold,
                                 fontSize = 13.sp
                             )
                             Text(
-                                "Drag to reposition • Pinch to resize",
+                                "Native mobile ratio • Drag to reposition",
                                 color = Color(0xFF94A3B8),
                                 fontSize = 10.sp
                             )
@@ -326,7 +311,7 @@ fun MainScreen(viewModel: StreamViewModel, modifier: Modifier = Modifier) {
                             modifier = Modifier.align(Alignment.TopStart)
                         ) {
                             Text(
-                                "SCREEN",
+                                "2.17:1",
                                 color = Color.Black,
                                 fontSize = 9.sp,
                                 fontWeight = FontWeight.Black,
@@ -335,10 +320,10 @@ fun MainScreen(viewModel: StreamViewModel, modifier: Modifier = Modifier) {
                         }
                     }
 
-                    // 2. Overlays Previews (Movable & Resizable with Dashed Border)
+                    // 2. Overlays Previews (Exact 16:9 Aspect Ratio with Dashed Border)
                     viewModel.overlays.forEachIndexed { index, overlay ->
                         val overlayWidthPx = (overlay.scalePercent / 100f * canvasSize.width).roundToInt()
-                        val overlayHeightPx = (overlay.scalePercent / 100f * canvasSize.height).roundToInt()
+                        val overlayHeightPx = (overlayWidthPx * 9f / 16f).roundToInt()
 
                         val offsetXPx = ((overlay.xPercent / 100f) * canvasSize.width).roundToInt()
                             .coerceIn(0, (canvasSize.width - overlayWidthPx).coerceAtLeast(0))
@@ -490,23 +475,23 @@ fun MainScreen(viewModel: StreamViewModel, modifier: Modifier = Modifier) {
                                     viewModel.updateGameScreenScale(100f)
                                 },
                                 modifier = Modifier.weight(1f)
-                            ) { Text("Full 100%", fontSize = 11.sp) }
+                            ) { Text("Top (Fit Width)", fontSize = 11.sp) }
 
                             OutlinedButton(
                                 onClick = {
-                                    viewModel.updateGameScreenPosition(0f, 0f)
-                                    viewModel.updateGameScreenScale(80f)
-                                },
-                                modifier = Modifier.weight(1f)
-                            ) { Text("Top 80%", fontSize = 11.sp) }
-
-                            OutlinedButton(
-                                onClick = {
-                                    viewModel.updateGameScreenPosition(10f, 10f)
-                                    viewModel.updateGameScreenScale(80f)
+                                    viewModel.updateGameScreenPosition(0f, 9f)
+                                    viewModel.updateGameScreenScale(100f)
                                 },
                                 modifier = Modifier.weight(1f)
                             ) { Text("Center", fontSize = 11.sp) }
+
+                            OutlinedButton(
+                                onClick = {
+                                    viewModel.updateGameScreenPosition(0f, 18f)
+                                    viewModel.updateGameScreenScale(100f)
+                                },
+                                modifier = Modifier.weight(1f)
+                            ) { Text("Bottom", fontSize = 11.sp) }
                         }
                     } else {
                         val currentOverlay = viewModel.overlays.find { it.id == selectedId }

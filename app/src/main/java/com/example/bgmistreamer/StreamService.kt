@@ -123,29 +123,23 @@ class StreamService : Service(), ConnectChecker {
                 data class VideoParams(val w: Int, val h: Int, val fps: Int, val bitrate: Int, val label: String)
 
                 val cascade = mutableListOf<VideoParams>()
-
-                // Calculate exact mobile screen aspect ratio to eliminate black bars on upper and bottom
-                val (baseH, fps, bitrate) = when (quality) {
-                    "4K 60fps" -> Triple(2160, 60, 15000 * 1024)
-                    "1440p 60fps" -> Triple(1440, 60, 9000 * 1024)
-                    "1080p 60fps" -> Triple(1080, 60, 4000 * 1024)
-                    else -> Triple(720, 30, 2000 * 1024)
+                when (quality) {
+                    "4K 60fps" -> {
+                        cascade += VideoParams(if (isLandscape) 3840 else 2160, if (isLandscape) 2160 else 3840, 60, 15000 * 1024, "4K 60fps")
+                        cascade += VideoParams(if (isLandscape) 1920 else 1080, if (isLandscape) 1080 else 1920, 60, 4000 * 1024, "1080p 60fps")
+                    }
+                    "1440p 60fps" -> {
+                        cascade += VideoParams(if (isLandscape) 2560 else 1440, if (isLandscape) 1440 else 2560, 60, 9000 * 1024, "1440p 60fps")
+                        cascade += VideoParams(if (isLandscape) 1920 else 1080, if (isLandscape) 1080 else 1920, 60, 4000 * 1024, "1080p 60fps")
+                    }
+                    "1080p 60fps" -> {
+                        cascade += VideoParams(if (isLandscape) 1920 else 1080, if (isLandscape) 1080 else 1920, 60, 4000 * 1024, "1080p 60fps")
+                    }
+                    else -> {}
                 }
+                cascade += VideoParams(if (isLandscape) 1280 else 720, if (isLandscape) 720 else 1280, 30, 2000 * 1024, "720p 30fps")
+                cascade += VideoParams(if (isLandscape) 854 else 480, if (isLandscape) 480 else 854, 30, 1000 * 1024, "480p 30fps")
 
-                // 1. Native mobile aspect ratio (NO black bars on upper/bottom)
-                val (nw, nh) = getNativeResolution(isLandscape, baseH)
-                cascade += VideoParams(nw, nh, fps, bitrate, "$quality (Full Mobile Screen)")
-
-                if (baseH > 720) {
-                    val (nw720, nh720) = getNativeResolution(isLandscape, 720)
-                    cascade += VideoParams(nw720, nh720, 30, 2000 * 1024, "720p 30fps (Full Mobile Screen)")
-                }
-                val (nw480, nh480) = getNativeResolution(isLandscape, 480)
-                cascade += VideoParams(nw480, nh480, 30, 1000 * 1024, "480p 30fps (Full Mobile Screen)")
-
-                // 2. Standard 16:9 fallbacks
-                cascade += VideoParams(if (isLandscape) 1280 else 720, if (isLandscape) 720 else 1280, 30, 2000 * 1024, "720p 30fps (16:9)")
-                cascade += VideoParams(if (isLandscape) 854 else 480, if (isLandscape) 480 else 854, 30, 1000 * 1024, "480p 30fps (16:9)")
 
                 val audioOptions = listOf(
                     Triple(128 * 1024, 44100, true),
