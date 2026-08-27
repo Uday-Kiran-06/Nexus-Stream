@@ -18,11 +18,13 @@ import android.os.IBinder
 import android.os.Looper
 import android.provider.Settings
 import android.view.Gravity
+import android.view.MotionEvent
 import android.view.Surface
 import android.view.View
 import android.view.WindowManager
 import android.widget.Button
 import android.widget.LinearLayout
+import android.widget.TextView
 import android.widget.Toast
 import androidx.compose.runtime.mutableStateOf
 import androidx.core.app.NotificationCompat
@@ -300,46 +302,14 @@ class StreamService : Service(), ConnectChecker {
         }
     }
 
+    private var isOverlayExpanded = false
+
     private fun showOverlay() {
         if (!Settings.canDrawOverlays(this)) return
 
         try {
             windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
-
-            val layout = LinearLayout(this).apply {
-                orientation = LinearLayout.HORIZONTAL
-                setPadding(16, 12, 16, 12)
-                background = GradientDrawable().apply {
-                    setColor(Color.parseColor("#EE1E1E2E"))
-                    cornerRadius = 24f
-                    setStroke(2, Color.parseColor("#55FFFFFF"))
-                }
-            }
-
-            val micBtn = Button(this).apply {
-                text = if (isMicMutedState.value) "🔇 Muted" else "🎤 Mic"
-                textSize = 12f
-                setPadding(16, 6, 16, 6)
-                setOnClickListener {
-                    toggleMic()
-                }
-            }
-            micButtonView = micBtn
-
-            val stopBtn = Button(this).apply {
-                text = "🔴 Stop"
-                textSize = 12f
-                setPadding(16, 6, 16, 6)
-                setOnClickListener {
-                    stopStream()
-                    stopSelf()
-                }
-            }
-
-            layout.addView(micBtn)
-            layout.addView(stopBtn)
-
-            floatingLayout = layout
+            val density = resources.displayMetrics.density
 
             val params = WindowManager.LayoutParams(
                 WindowManager.LayoutParams.WRAP_CONTENT,
@@ -350,12 +320,119 @@ class StreamService : Service(), ConnectChecker {
                     @Suppress("DEPRECATION") WindowManager.LayoutParams.TYPE_PHONE,
                 WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
                 PixelFormat.TRANSLUCENT
-            )
-            params.gravity = Gravity.TOP or Gravity.START
-            params.x = 80
-            params.y = 80
+            ).apply {
+                gravity = Gravity.TOP or Gravity.START
+                x = (16 * density).toInt()
+                y = (160 * density).toInt()
+            }
 
-            windowManager?.addView(layout, params)
+            val container = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+            }
+
+            // Small circular toggle button with arrow (hidden options by default)
+            val arrowButton = TextView(this).apply {
+                text = "▶"
+                textSize = 15f
+                setTextColor(Color.WHITE)
+                gravity = Gravity.CENTER
+                val sizePx = (42 * density).toInt()
+                layoutParams = LinearLayout.LayoutParams(sizePx, sizePx)
+                background = GradientDrawable().apply {
+                    shape = GradientDrawable.OVAL
+                    setColor(Color.parseColor("#EE1E1E2E"))
+                    setStroke((2 * density).toInt(), Color.parseColor("#00E5FF"))
+                }
+            }
+
+            // Options container (revealed when arrow is clicked)
+            val optionsLayout = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                visibility = View.GONE
+                setPadding((6 * density).toInt(), 0, (6 * density).toInt(), 0)
+                background = GradientDrawable().apply {
+                    setColor(Color.parseColor("#EE1E1E2E"))
+                    cornerRadius = 24 * density
+                    setStroke((1.5f * density).toInt(), Color.parseColor("#55FFFFFF"))
+                }
+            }
+
+            val micBtn = Button(this).apply {
+                text = if (isMicMutedState.value) "🔇 Muted" else "🎤 Mic"
+                textSize = 12f
+                setPadding(18, 6, 18, 6)
+                setOnClickListener {
+                    toggleMic()
+                }
+            }
+            micButtonView = micBtn
+
+            val stopBtn = Button(this).apply {
+                text = "🔴 Stop"
+                textSize = 12f
+                setPadding(18, 6, 18, 6)
+                setOnClickListener {
+                    stopStream()
+                    stopSelf()
+                }
+            }
+
+            optionsLayout.addView(micBtn)
+            optionsLayout.addView(stopBtn)
+
+            // Touch listener on arrowButton for dragging & tapping
+            var initialX = 0
+            var initialY = 0
+            var initialTouchX = 0f
+            var initialTouchY = 0f
+            var isClick = false
+
+            arrowButton.setOnTouchListener { _, event ->
+                when (event.action) {
+                    MotionEvent.ACTION_DOWN -> {
+                        initialX = params.x
+                        initialY = params.y
+                        initialTouchX = event.rawX
+                        initialTouchY = event.rawY
+                        isClick = true
+                        true
+                    }
+                    MotionEvent.ACTION_MOVE -> {
+                        val dx = (event.rawX - initialTouchX).toInt()
+                        val dy = (event.rawY - initialTouchY).toInt()
+                        if (Math.abs(dx) > 10 || Math.abs(dy) > 10) {
+                            isClick = false
+                            params.x = initialX + dx
+                            params.y = initialY + dy
+                            windowManager?.updateViewLayout(container, params)
+                        }
+                        true
+                    }
+                    MotionEvent.ACTION_UP -> {
+                        if (isClick) {
+                            // Toggle expand/collapse on click
+                            isOverlayExpanded = !isOverlayExpanded
+                            if (isOverlayExpanded) {
+                                arrowButton.text = "◀"
+                                optionsLayout.visibility = View.VISIBLE
+                            } else {
+                                arrowButton.text = "▶"
+                                optionsLayout.visibility = View.GONE
+                            }
+                        }
+                        true
+                    }
+                    else -> false
+                }
+            }
+
+            container.addView(arrowButton)
+            container.addView(optionsLayout)
+
+            floatingLayout = container
+            windowManager?.addView(container, params)
         } catch (e: Exception) {
             e.printStackTrace()
         }
