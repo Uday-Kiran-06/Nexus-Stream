@@ -196,12 +196,41 @@ class StreamService : Service(), ConnectChecker {
     }
 
     private fun applyOverlaysFromIntent(intent: Intent) {
-        val uris = intent.getStringArrayListExtra("overlayUris") ?: return
-        val scales = intent.getFloatArrayExtra("overlayScales") ?: return
-        val xPos = intent.getFloatArrayExtra("overlayX") ?: return
-        val yPos = intent.getFloatArrayExtra("overlayY") ?: return
+        val uris = intent.getStringArrayListExtra("overlayUris") ?: arrayListOf()
+        val scales = intent.getFloatArrayExtra("overlayScales") ?: floatArrayOf()
+        val xPos = intent.getFloatArrayExtra("overlayX") ?: floatArrayOf()
+        val yPos = intent.getFloatArrayExtra("overlayY") ?: floatArrayOf()
         val chromaKeys = intent.getBooleanArrayExtra("overlayChromaKeys")
 
+        val gameScreenScale = intent.getFloatExtra("gameScreenScale", 100f)
+        val gameScreenX = intent.getFloatExtra("gameScreenX", 0f)
+        val gameScreenY = intent.getFloatExtra("gameScreenY", 0f)
+
+        // 1. Measure device physical display aspect ratio (e.g. 2.17:1)
+        val wm = getSystemService(Context.WINDOW_SERVICE) as WindowManager
+        val (physW, physH) = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            val bounds = wm.maximumWindowMetrics.bounds
+            bounds.width() to bounds.height()
+        } else {
+            val dm = android.util.DisplayMetrics()
+            @Suppress("DEPRECATION")
+            wm.defaultDisplay.getRealMetrics(dm)
+            dm.widthPixels to dm.heightPixels
+        }
+        val phoneRatio = maxOf(physW, physH).toFloat() / minOf(physW, physH).toFloat().coerceAtLeast(1f)
+
+        // 2. ALWAYS add GameScreenFilterRender FIRST:
+        // Strips upper & bottom letterbox black bars from 2.17:1 phone capture and positions it at top/user offset
+        val gameFilter = GameScreenFilterRender(
+            phoneRatio = if (phoneRatio > 1.8f) phoneRatio else 2.17f,
+            streamRatio = 16f / 9f,
+            scale = gameScreenScale / 100f,
+            offsetX = gameScreenX / 100f,
+            offsetY = gameScreenY / 100f
+        )
+        rtmpDisplay.glInterface.addFilter(gameFilter)
+
+        // 3. Render overlays ON TOP of the positioned game screen
         for (i in uris.indices) {
             try {
                 val uri = android.net.Uri.parse(uris[i])

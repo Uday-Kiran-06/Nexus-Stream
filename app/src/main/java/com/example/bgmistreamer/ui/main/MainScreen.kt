@@ -120,12 +120,21 @@ fun MainScreen(viewModel: StreamViewModel, modifier: Modifier = Modifier) {
             putExtra("overlayX", xPos)
             putExtra("overlayY", yPos)
             putExtra("overlayChromaKeys", chromaKeys)
+
+            putExtra("gameScreenScale", viewModel.gameScreenScalePercent.value)
+            putExtra("gameScreenX", viewModel.gameScreenXPercent.value)
+            putExtra("gameScreenY", viewModel.gameScreenYPercent.value)
         }
         context.startService(intent)
     }
 
-    // Automatically sync overlay changes (add, remove, move, resize, chroma) with live stream in real-time
-    LaunchedEffect(viewModel.overlays.map { "${it.id}_${it.xPercent}_${it.yPercent}_${it.scalePercent}_${it.chromaKey}" }) {
+    // Automatically sync overlay & game screen layout changes with live stream in real-time
+    LaunchedEffect(
+        viewModel.overlays.map { "${it.id}_${it.xPercent}_${it.yPercent}_${it.scalePercent}_${it.chromaKey}" },
+        viewModel.gameScreenScalePercent.value,
+        viewModel.gameScreenXPercent.value,
+        viewModel.gameScreenYPercent.value
+    ) {
         if (isStreaming) {
             delay(150)
             syncOverlaysWithService()
@@ -182,6 +191,10 @@ fun MainScreen(viewModel: StreamViewModel, modifier: Modifier = Modifier) {
                 putExtra("overlayX", xPos)
                 putExtra("overlayY", yPos)
                 putExtra("overlayChromaKeys", chromaKeys)
+
+                putExtra("gameScreenScale", viewModel.gameScreenScalePercent.value)
+                putExtra("gameScreenX", viewModel.gameScreenXPercent.value)
+                putExtra("gameScreenY", viewModel.gameScreenYPercent.value)
             }
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 context.startForegroundService(intent)
