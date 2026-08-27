@@ -31,6 +31,11 @@ import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.graphics.PathEffect
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
@@ -40,6 +45,32 @@ import com.example.bgmistreamer.StreamService
 import com.example.bgmistreamer.StreamViewModel
 import kotlinx.coroutines.delay
 import kotlin.math.roundToInt
+
+// Extension for high-visibility dashed borders in studio preview
+fun Modifier.dashedBorder(
+    width: Dp,
+    color: Color,
+    cornerRadius: Dp = 0.dp,
+    dashLength: Dp = 6.dp,
+    gapLength: Dp = 6.dp
+) = this.drawBehind {
+    val stroke = Stroke(
+        width = width.toPx(),
+        pathEffect = PathEffect.dashPathEffect(floatArrayOf(dashLength.toPx(), gapLength.toPx()), 0f)
+    )
+    if (cornerRadius.value > 0f) {
+        drawRoundRect(
+            color = color,
+            style = stroke,
+            cornerRadius = CornerRadius(cornerRadius.toPx(), cornerRadius.toPx())
+        )
+    } else {
+        drawRect(
+            color = color,
+            style = stroke
+        )
+    }
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -63,6 +94,7 @@ fun MainScreen(viewModel: StreamViewModel, modifier: Modifier = Modifier) {
 
     val isStreaming by StreamService.isStreamingState
     val isMicMuted by StreamService.isMicMutedState
+    val selectedId by viewModel.selectedElementId
     var durationText by remember { mutableStateOf("00:00:00") }
 
     fun syncOverlaysWithService() {
@@ -120,7 +152,7 @@ fun MainScreen(viewModel: StreamViewModel, modifier: Modifier = Modifier) {
         if (result.resultCode == android.app.Activity.RESULT_OK) {
             val cleanBase = viewModel.rtmpUrl.value.trim().trimEnd('/')
             val cleanKey = viewModel.streamKey.value.trim().trimStart('/')
-            val fullUrl = if (cleanKey.isEmpty()) cleanBase else "$cleanBase/$cleanKey"
+            val fullUrl = if (cleanKey.isNotEmpty()) "$cleanBase/$cleanKey" else cleanBase
 
             val intent = Intent(context, StreamService::class.java).apply {
                 action = "START_STREAM"
@@ -193,33 +225,97 @@ fun MainScreen(viewModel: StreamViewModel, modifier: Modifier = Modifier) {
                 modifier = Modifier.padding(bottom = 16.dp)
             )
 
-            // 16:9 Canvas Layout Editor
-            // overlayCanvas is a NON-scrollable Box so gestures work correctly
+            // 16:9 Canvas Layout Editor with Movable Dashed Screen and Overlay Previews
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
                     .aspectRatio(16f / 9f)
-                    .clip(RoundedCornerShape(8.dp))
-                    .background(Color.Black)
-                    .border(2.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(8.dp))
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(Color(0xFF0B1120))
+                    .border(2.dp, Color(0xFF334155), RoundedCornerShape(12.dp))
                     .clipToBounds()
                     .onGloballyPositioned { coordinates ->
                         canvasSize = coordinates.size
                     }
             ) {
-                // Base Game Screen placeholder
-                Box(modifier = Modifier.fillMaxSize().background(Color.DarkGray)) {
-                    Text("Game Screen", color = Color.White, modifier = Modifier.align(Alignment.Center))
-                }
-
-                // Overlays — using offset() so touch hit area matches visual position
                 if (canvasSize.width > 0 && canvasSize.height > 0) {
-                    viewModel.overlays.forEach { overlay ->
-                        // Overlay size is a % of canvas width
+                    // 1. Mobile Game Screen Preview (Movable & Resizable with Dashed Border)
+                    val gameWidthPx = (viewModel.gameScreenScalePercent.value / 100f * canvasSize.width).roundToInt()
+                    val gameHeightPx = (viewModel.gameScreenScalePercent.value / 100f * canvasSize.height).roundToInt()
+                    val gameOffsetXPx = ((viewModel.gameScreenXPercent.value / 100f) * canvasSize.width).roundToInt()
+                        .coerceIn(0, (canvasSize.width - gameWidthPx).coerceAtLeast(0))
+                    val gameOffsetYPx = ((viewModel.gameScreenYPercent.value / 100f) * canvasSize.height).roundToInt()
+                        .coerceIn(0, (canvasSize.height - gameHeightPx).coerceAtLeast(0))
+
+                    val isGameSelected = selectedId == "GAME_SCREEN"
+
+                    Box(
+                        modifier = Modifier
+                            .offset { IntOffset(gameOffsetXPx, gameOffsetYPx) }
+                            .size(
+                                width = with(density) { gameWidthPx.toDp() },
+                                height = with(density) { gameHeightPx.toDp() }
+                            )
+                            .background(Color(0xFF1E293B))
+                            .dashedBorder(
+                                width = if (isGameSelected) 2.5.dp else 1.5.dp,
+                                color = if (isGameSelected) Color(0xFF00E5FF) else Color(0x7700E5FF),
+                                cornerRadius = 6.dp
+                            )
+                            .pointerInput("game_screen_drag") {
+                                detectTransformGestures { _, pan, zoom, _ ->
+                                    viewModel.selectElement("GAME_SCREEN")
+                                    val newX = ((gameOffsetXPx + pan.x) / canvasSize.width * 100f).coerceIn(0f, 100f)
+                                    val newY = ((gameOffsetYPx + pan.y) / canvasSize.height * 100f).coerceIn(0f, 100f)
+                                    val newScale = (viewModel.gameScreenScalePercent.value * zoom).coerceIn(20f, 100f)
+                                    viewModel.updateGameScreenPosition(newX, newY)
+                                    viewModel.updateGameScreenScale(newScale)
+                                }
+                            }
+                            .pointerInput("game_screen_tap") {
+                                detectTapGestures {
+                                    viewModel.selectElement("GAME_SCREEN")
+                                }
+                            }
+                    ) {
+                        Column(
+                            modifier = Modifier.align(Alignment.Center),
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            Text(
+                                "📱 Mobile Game Screen",
+                                color = if (isGameSelected) Color(0xFF00E5FF) else Color(0xCCFFFFFF),
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 13.sp
+                            )
+                            Text(
+                                "Drag to reposition • Pinch to resize",
+                                color = Color(0xFF94A3B8),
+                                fontSize = 10.sp
+                            )
+                        }
+
+                        // Badge
+                        Surface(
+                            shape = RoundedCornerShape(bottomEnd = 6.dp),
+                            color = if (isGameSelected) Color(0xFF00E5FF) else Color(0x6600E5FF),
+                            modifier = Modifier.align(Alignment.TopStart)
+                        ) {
+                            Text(
+                                "SCREEN",
+                                color = Color.Black,
+                                fontSize = 9.sp,
+                                fontWeight = FontWeight.Black,
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                            )
+                        }
+                    }
+
+                    // 2. Overlays Previews (Movable & Resizable with Dashed Border)
+                    viewModel.overlays.forEachIndexed { index, overlay ->
                         val overlayWidthPx = (overlay.scalePercent / 100f * canvasSize.width).roundToInt()
                         val overlayHeightPx = (overlay.scalePercent / 100f * canvasSize.height).roundToInt()
 
-                        // Position: xPercent/yPercent is top-left corner as % of canvas
                         val offsetXPx = ((overlay.xPercent / 100f) * canvasSize.width).roundToInt()
                             .coerceIn(0, (canvasSize.width - overlayWidthPx).coerceAtLeast(0))
                         val offsetYPx = ((overlay.yPercent / 100f) * canvasSize.height).roundToInt()
@@ -227,21 +323,25 @@ fun MainScreen(viewModel: StreamViewModel, modifier: Modifier = Modifier) {
 
                         val overlayWidthDp = with(density) { overlayWidthPx.toDp() }
                         val overlayHeightDp = with(density) { overlayHeightPx.toDp() }
+                        val isOverlaySelected = selectedId == overlay.id
 
                         val imageRequest = coil.request.ImageRequest.Builder(context)
                             .data(Uri.parse(overlay.uri))
                             .decoderFactory(coil.decode.VideoFrameDecoder.Factory())
                             .build()
 
-                        AsyncImage(
-                            model = imageRequest,
-                            contentDescription = "Overlay",
-                            contentScale = ContentScale.Fit,
+                        Box(
                             modifier = Modifier
                                 .offset { IntOffset(offsetXPx, offsetYPx) }
                                 .size(width = overlayWidthDp, height = overlayHeightDp)
+                                .dashedBorder(
+                                    width = if (isOverlaySelected) 2.5.dp else 1.5.dp,
+                                    color = if (isOverlaySelected) Color(0xFFFFD600) else Color(0x99FFD600),
+                                    cornerRadius = 6.dp
+                                )
                                 .pointerInput(overlay.id) {
                                     detectTransformGestures { _, pan, zoom, _ ->
+                                        viewModel.selectElement(overlay.id)
                                         val newXPercent = ((offsetXPx + pan.x) / canvasSize.width * 100f)
                                             .coerceIn(0f, 100f)
                                         val newYPercent = ((offsetYPx + pan.y) / canvasSize.height * 100f)
@@ -254,80 +354,212 @@ fun MainScreen(viewModel: StreamViewModel, modifier: Modifier = Modifier) {
                                 }
                                 .pointerInput(overlay.id + "_tap") {
                                     detectTapGestures(
-                                        onDoubleTap = {
-                                            viewModel.removeOverlay(overlay.id)
-                                        }
+                                        onTap = { viewModel.selectElement(overlay.id) },
+                                        onDoubleTap = { viewModel.removeOverlay(overlay.id) }
                                     )
                                 }
-                        )
+                        ) {
+                            AsyncImage(
+                                model = imageRequest,
+                                contentDescription = "Overlay",
+                                contentScale = ContentScale.Fit,
+                                modifier = Modifier.fillMaxSize()
+                            )
+
+                            Surface(
+                                shape = RoundedCornerShape(bottomEnd = 6.dp),
+                                color = if (isOverlaySelected) Color(0xFFFFD600) else Color(0x66FFD600),
+                                modifier = Modifier.align(Alignment.TopStart)
+                            ) {
+                                Text(
+                                    "OVERLAY ${index + 1}",
+                                    color = Color.Black,
+                                    fontSize = 9.sp,
+                                    fontWeight = FontWeight.Black,
+                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                )
+                            }
+                        }
                     }
                 }
             }
 
-            Spacer(modifier = Modifier.height(8.dp))
+            Spacer(modifier = Modifier.height(10.dp))
             Text(
-                "Drag to move • Pinch to scale • Double-tap to delete",
+                "💡 Tap any section to select • Drag to move • Pinch to scale",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
 
-            // Active overlay list with quick controls
-            if (viewModel.overlays.isNotEmpty()) {
-                Spacer(modifier = Modifier.height(16.dp))
-                Text("Active Overlays", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                Spacer(modifier = Modifier.height(8.dp))
+            Spacer(modifier = Modifier.height(12.dp))
 
-                Column(modifier = Modifier.fillMaxWidth()) {
-                    viewModel.overlays.forEachIndexed { index, overlay ->
-                        Card(
-                            modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
-                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
-                        ) {
-                            Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp)) {
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Text(
-                                        "Overlay ${index + 1}",
-                                        modifier = Modifier.weight(1f),
-                                        style = MaterialTheme.typography.bodyMedium,
-                                        fontWeight = FontWeight.SemiBold
-                                    )
-                                    OutlinedButton(
-                                        onClick = {
-                                            viewModel.updateOverlayPosition(overlay.id, 0f, 0f)
-                                            viewModel.updateOverlayScale(overlay.id, 100f)
-                                        },
-                                        modifier = Modifier.padding(end = 8.dp)
-                                    ) { Text("Fit") }
-                                    OutlinedButton(
-                                        onClick = {
-                                            viewModel.updateOverlayPosition(overlay.id, 25f, 25f)
-                                            viewModel.updateOverlayScale(overlay.id, 30f)
-                                        }
-                                    ) { Text("Reset") }
-                                    IconButton(onClick = { viewModel.removeOverlay(overlay.id) }) {
-                                        Text("✕", color = MaterialTheme.colorScheme.error)
+            // Interactive Precision Adjuster Panel (Manual Position & Scale Sliders)
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+            ) {
+                Column(modifier = Modifier.fillMaxWidth().padding(14.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = if (selectedId == "GAME_SCREEN") "📱 Adjust Game Screen" else {
+                                val idx = viewModel.overlays.indexOfFirst { it.id == selectedId }
+                                if (idx != -1) "🖼️ Adjust Overlay ${idx + 1}" else "⚙️ Element Controls"
+                            },
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = if (selectedId == "GAME_SCREEN") Color(0xFF00E5FF) else Color(0xFFFFD600),
+                            modifier = Modifier.weight(1f)
+                        )
+
+                        AssistChip(
+                            onClick = {
+                                if (selectedId == "GAME_SCREEN") {
+                                    if (viewModel.overlays.isNotEmpty()) {
+                                        viewModel.selectElement(viewModel.overlays.first().id)
                                     }
+                                } else {
+                                    viewModel.selectElement("GAME_SCREEN")
                                 }
-                                // Chroma Key toggle (only for images — green screen removal)
-                                Row(
-                                    modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Text(
-                                        "🟢 Chroma Key (Green Screen)",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        modifier = Modifier.weight(1f),
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                    Switch(
-                                        checked = overlay.chromaKey,
-                                        onCheckedChange = { viewModel.updateOverlayChromaKey(overlay.id, it) }
-                                    )
-                                }
+                            },
+                            label = {
+                                Text(if (selectedId == "GAME_SCREEN") "Edit Overlays" else "Edit Game Screen")
                             }
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    if (selectedId == "GAME_SCREEN") {
+                        // Game Screen sliders
+                        Text("Size / Scale: ${viewModel.gameScreenScalePercent.value.roundToInt()}%", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                        Slider(
+                            value = viewModel.gameScreenScalePercent.value,
+                            onValueChange = { viewModel.updateGameScreenScale(it) },
+                            valueRange = 20f..100f
+                        )
+
+                        Text("Horizontal Position (X): ${viewModel.gameScreenXPercent.value.roundToInt()}%", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                        Slider(
+                            value = viewModel.gameScreenXPercent.value,
+                            onValueChange = { viewModel.updateGameScreenPosition(it, viewModel.gameScreenYPercent.value) },
+                            valueRange = 0f..100f
+                        )
+
+                        Text("Vertical Position (Y): ${viewModel.gameScreenYPercent.value.roundToInt()}%", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                        Slider(
+                            value = viewModel.gameScreenYPercent.value,
+                            onValueChange = { viewModel.updateGameScreenPosition(viewModel.gameScreenXPercent.value, it) },
+                            valueRange = 0f..100f
+                        )
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            OutlinedButton(
+                                onClick = {
+                                    viewModel.updateGameScreenPosition(0f, 0f)
+                                    viewModel.updateGameScreenScale(100f)
+                                },
+                                modifier = Modifier.weight(1f)
+                            ) { Text("Full 100%", fontSize = 11.sp) }
+
+                            OutlinedButton(
+                                onClick = {
+                                    viewModel.updateGameScreenPosition(0f, 0f)
+                                    viewModel.updateGameScreenScale(80f)
+                                },
+                                modifier = Modifier.weight(1f)
+                            ) { Text("Top 80%", fontSize = 11.sp) }
+
+                            OutlinedButton(
+                                onClick = {
+                                    viewModel.updateGameScreenPosition(10f, 10f)
+                                    viewModel.updateGameScreenScale(80f)
+                                },
+                                modifier = Modifier.weight(1f)
+                            ) { Text("Center", fontSize = 11.sp) }
+                        }
+                    } else {
+                        val currentOverlay = viewModel.overlays.find { it.id == selectedId }
+                        if (currentOverlay != null) {
+                            Text("Size / Scale: ${currentOverlay.scalePercent.roundToInt()}%", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                            Slider(
+                                value = currentOverlay.scalePercent,
+                                onValueChange = { viewModel.updateOverlayScale(currentOverlay.id, it) },
+                                valueRange = 5f..100f
+                            )
+
+                            Text("Horizontal Position (X): ${currentOverlay.xPercent.roundToInt()}%", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                            Slider(
+                                value = currentOverlay.xPercent,
+                                onValueChange = { viewModel.updateOverlayPosition(currentOverlay.id, it, currentOverlay.yPercent) },
+                                valueRange = 0f..100f
+                            )
+
+                            Text("Vertical Position (Y): ${currentOverlay.yPercent.roundToInt()}%", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                            Slider(
+                                value = currentOverlay.yPercent,
+                                onValueChange = { viewModel.updateOverlayPosition(currentOverlay.id, currentOverlay.xPercent, it) },
+                                valueRange = 0f..100f
+                            )
+
+                            Row(
+                                modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                OutlinedButton(
+                                    onClick = { viewModel.updateOverlayPosition(currentOverlay.id, currentOverlay.xPercent, 0f) },
+                                    modifier = Modifier.weight(1f)
+                                ) { Text("Top", fontSize = 11.sp) }
+
+                                OutlinedButton(
+                                    onClick = {
+                                        val centeredX = (50f - currentOverlay.scalePercent / 2f).coerceAtLeast(0f)
+                                        val centeredY = (50f - currentOverlay.scalePercent / 2f).coerceAtLeast(0f)
+                                        viewModel.updateOverlayPosition(currentOverlay.id, centeredX, centeredY)
+                                    },
+                                    modifier = Modifier.weight(1f)
+                                ) { Text("Center", fontSize = 11.sp) }
+
+                                OutlinedButton(
+                                    onClick = {
+                                        val bottomY = (100f - currentOverlay.scalePercent).coerceAtLeast(0f)
+                                        viewModel.updateOverlayPosition(currentOverlay.id, currentOverlay.xPercent, bottomY)
+                                    },
+                                    modifier = Modifier.weight(1f)
+                                ) { Text("Bottom", fontSize = 11.sp) }
+
+                                OutlinedButton(
+                                    onClick = {
+                                        viewModel.updateOverlayPosition(currentOverlay.id, 0f, 0f)
+                                        viewModel.updateOverlayScale(currentOverlay.id, 100f)
+                                    },
+                                    modifier = Modifier.weight(1f)
+                                ) { Text("Fit", fontSize = 11.sp) }
+                            }
+
+                            Row(
+                                modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    "🟢 Chroma Key (Green Screen)",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    modifier = Modifier.weight(1f),
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                                Switch(
+                                    checked = currentOverlay.chromaKey,
+                                    onCheckedChange = { viewModel.updateOverlayChromaKey(currentOverlay.id, it) }
+                                )
+                            }
+                        } else {
+                            Text("Tap any overlay on the preview canvas or in the list below to select and adjust it.", color = Color.Gray, fontSize = 12.sp)
                         }
                     }
                 }

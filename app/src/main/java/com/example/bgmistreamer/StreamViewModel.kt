@@ -32,10 +32,36 @@ class StreamViewModel(application: Application) : AndroidViewModel(application) 
     
     val isChromaKeyEnabled = mutableStateOf(prefs.getBoolean("isChromaKeyEnabled", false))
     
+    // Selected element for fine manual adjustment: "GAME_SCREEN" or an overlay ID
+    val selectedElementId = mutableStateOf<String?>("GAME_SCREEN")
+
+    // Mobile Game Screen preview placement
+    val gameScreenXPercent = mutableStateOf(prefs.getFloat("gameScreenX", 0f))
+    val gameScreenYPercent = mutableStateOf(prefs.getFloat("gameScreenY", 0f))
+    val gameScreenScalePercent = mutableStateOf(prefs.getFloat("gameScreenScale", 100f))
+
     val overlays = mutableStateListOf<OverlayItem>()
     
     init {
         loadOverlays()
+    }
+    
+    fun selectElement(id: String?) {
+        selectedElementId.value = id
+    }
+
+    fun updateGameScreenPosition(x: Float, y: Float) {
+        gameScreenXPercent.value = x.coerceIn(0f, 100f)
+        gameScreenYPercent.value = y.coerceIn(0f, 100f)
+        prefs.edit()
+            .putFloat("gameScreenX", gameScreenXPercent.value)
+            .putFloat("gameScreenY", gameScreenYPercent.value)
+            .apply()
+    }
+
+    fun updateGameScreenScale(scale: Float) {
+        gameScreenScalePercent.value = scale.coerceIn(20f, 100f)
+        prefs.edit().putFloat("gameScreenScale", gameScreenScalePercent.value).apply()
     }
     
     fun saveSettings() {
