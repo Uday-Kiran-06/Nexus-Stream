@@ -11,6 +11,7 @@ import android.graphics.Color
 import android.graphics.PixelFormat
 import android.graphics.drawable.GradientDrawable
 import android.media.MediaPlayer
+import android.media.MediaRecorder
 import android.media.projection.MediaProjection
 import android.os.Build
 import android.os.Handler
@@ -23,6 +24,7 @@ import android.view.Surface
 import android.view.View
 import android.view.WindowManager
 import android.widget.Button
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
@@ -46,7 +48,8 @@ class StreamService : Service(), ConnectChecker {
     private lateinit var rtmpDisplay: RtmpDisplay
     private var windowManager: WindowManager? = null
     private var floatingLayout: LinearLayout? = null
-    private var micButtonView: TextView? = null
+    private var micButtonView: ImageView? = null
+    private var audioProcessor: StreamAudioProcessor? = null
     private var streamUrl: String = ""
     private val mediaPlayers = mutableListOf<MediaPlayer?>()
     private val mainHandler = Handler(Looper.getMainLooper())
@@ -98,6 +101,25 @@ class StreamService : Service(), ConnectChecker {
                 return START_STICKY
             }
 
+            if (action == "UPDATE_AUDIO_SETTINGS") {
+                val ns = intent.getBooleanExtra("noiseSuppressor", false)
+                val ec = intent.getBooleanExtra("echoCanceler", false)
+                val proc = audioProcessor ?: StreamAudioProcessor().also {
+                    audioProcessor = it
+                    rtmpDisplay.setCustomAudioEffect(it)
+                }
+                proc.enableNoiseSuppression = ns
+                proc.enableEchoCancellation = ec
+                mainHandler.post {
+                    Toast.makeText(
+                        this@StreamService,
+                        "Audio: NS is ${if (ns) "ON" else "OFF"} | Echo is ${if (ec) "ON" else "OFF"}",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                }
+                return START_STICKY
+            }
+
             streamUrl = intent.getStringExtra("url") ?: ""
             val resultCode = intent.getIntExtra("resultCode", android.app.Activity.RESULT_CANCELED)
             val data = intent.getParcelableExtra<Intent>("data")
@@ -118,6 +140,8 @@ class StreamService : Service(), ConnectChecker {
 
                 val quality = intent.getStringExtra("quality") ?: "720p 30fps"
                 val isLandscape = intent.getBooleanExtra("isLandscape", true)
+                val noiseSuppressor = intent.getBooleanExtra("noiseSuppressor", true)
+                val echoCanceler = intent.getBooleanExtra("echoCanceler", true)
                 val dpi = resources.displayMetrics.densityDpi
 
                 data class VideoParams(val w: Int, val h: Int, val fps: Int, val bitrate: Int, val label: String)
@@ -147,6 +171,14 @@ class StreamService : Service(), ConnectChecker {
                     Triple(64 * 1024, 44100, false)
                 )
 
+                // Use CAMCORDER, MIC, or DEFAULT for game streaming.
+                // CAMCORDER provides wide dynamic range, high fidelity, and zero ducking of game audio!
+                val audioSources = listOf(
+                    MediaRecorder.AudioSource.CAMCORDER,
+                    MediaRecorder.AudioSource.MIC,
+                    MediaRecorder.AudioSource.DEFAULT
+                )
+
                 var videoPrepared = false
                 var audioPrepared = false
                 var successLabel = ""
@@ -154,11 +186,42 @@ class StreamService : Service(), ConnectChecker {
                 outer@ for (vp in cascade) {
                     for ((aBitrate, sampleRate, stereo) in audioOptions) {
                         val vOk = rtmpDisplay.prepareVideo(vp.w, vp.h, vp.fps, vp.bitrate, 0, dpi)
-                        val aOk = rtmpDisplay.prepareAudio(aBitrate, sampleRate, stereo, false, false)
+                        var aOk = false
+                        for (source in audioSources) {
+                            val success = rtmpDisplay.prepareAudio(source, aBitrate, sampleRate, stereo, echoCanceler, noiseSuppressor)
+                            android.util.Log.d("StreamServiceAudio", "Trying prepareAudio: source=$source, bitRate=$aBitrate, sampleRate=$sampleRate, stereo=$stereo, ec=$echoCanceler, ns=$noiseSuppressor -> SUCCESS=$success")
+                            if (success) {
+                                aOk = true
+                                break
+                            }
+                        }
+                        if (!aOk) {
+                            val success = rtmpDisplay.prepareAudio(aBitrate, sampleRate, stereo, false, false)
+                            android.util.Log.d("StreamServiceAudio", "Fallback prepareAudio without hw ec/ns: sampleRate=$sampleRate, stereo=$stereo -> SUCCESS=$success")
+                            aOk = success
+                        }
+
                         if (vOk && aOk) {
                             videoPrepared = true
                             audioPrepared = true
-                            successLabel = "${vp.label} @ ${sampleRate}Hz"
+
+                            // Active software DSP filter (only if enabled, gentle HPF + limiter, no game mute)
+                            if (noiseSuppressor || echoCanceler) {
+                                val proc = StreamAudioProcessor(
+                                    enableNoiseSuppression = noiseSuppressor,
+                                    enableEchoCancellation = echoCanceler
+                                )
+                                audioProcessor = proc
+                                rtmpDisplay.setCustomAudioEffect(proc)
+                            } else {
+                                audioProcessor = null
+                            }
+
+                            val audioFilters = mutableListOf<String>()
+                            if (noiseSuppressor) audioFilters.add("NS")
+                            if (echoCanceler) audioFilters.add("AEC")
+                            val filterTag = if (audioFilters.isNotEmpty()) " (${audioFilters.joinToString("+")})" else ""
+                            successLabel = "${vp.label} @ ${sampleRate}Hz$filterTag"
                             break@outer
                         } else if (vOk && !aOk) {
                             videoPrepared = true
@@ -313,11 +376,11 @@ class StreamService : Service(), ConnectChecker {
             rtmpDisplay.enableAudio()
             isMicMutedState.value = false
             mainHandler.post {
-                micButtonView?.text = "🎤"
+                micButtonView?.setImageResource(R.drawable.ic_stream_mic)
                 micButtonView?.background = GradientDrawable().apply {
                     shape = GradientDrawable.OVAL
-                    setColor(Color.parseColor("#3310B981"))
-                    setStroke((1.5f * density).toInt(), Color.parseColor("#10B981"))
+                    setColor(Color.parseColor("#18181B"))
+                    setStroke((1.5f * density).toInt(), Color.parseColor("#52525B"))
                 }
                 Toast.makeText(this, "🎤 Microphone Live", Toast.LENGTH_SHORT).show()
             }
@@ -325,10 +388,10 @@ class StreamService : Service(), ConnectChecker {
             rtmpDisplay.disableAudio()
             isMicMutedState.value = true
             mainHandler.post {
-                micButtonView?.text = "🔇"
+                micButtonView?.setImageResource(R.drawable.ic_stream_mic_off)
                 micButtonView?.background = GradientDrawable().apply {
                     shape = GradientDrawable.OVAL
-                    setColor(Color.parseColor("#44EF4444"))
+                    setColor(Color.parseColor("#DC2626"))
                     setStroke((1.5f * density).toInt(), Color.parseColor("#EF4444"))
                 }
                 Toast.makeText(this, "🔇 Microphone Muted", Toast.LENGTH_SHORT).show()
@@ -365,20 +428,19 @@ class StreamService : Service(), ConnectChecker {
                 gravity = Gravity.CENTER_VERTICAL
             }
 
-            // Circular toggle button matching user's image with transparent glass styling
-            val arrowButton = TextView(this).apply {
-                text = "❯"
-                textSize = 18f
-                setTextColor(Color.WHITE)
-                gravity = Gravity.CENTER
-                alpha = 0.40f // Semi-transparent by default so game is visible beneath
-                val sizePx = (40 * density).toInt()
+            // Circular transparent arrow button
+            val arrowButton = ImageView(this).apply {
+                setImageResource(R.drawable.ic_stream_chevron_right)
+                scaleType = ImageView.ScaleType.CENTER_INSIDE
+                val sizePx = (42 * density).toInt()
+                val padPx = (10 * density).toInt()
+                setPadding(padPx, padPx, padPx, padPx)
                 layoutParams = LinearLayout.LayoutParams(sizePx, sizePx)
+                alpha = 0.50f // Transparent when idle so game is visible beneath
                 background = GradientDrawable().apply {
                     shape = GradientDrawable.OVAL
-                    // Translucent lime-green matching user image with glass transparency
-                    setColor(Color.parseColor("#5522C55E"))
-                    setStroke((2 * density).toInt(), Color.parseColor("#884ADE80"))
+                    setColor(Color.parseColor("#26000000")) // Transparent subtle dark tint
+                    setStroke((1.5f * density).toInt(), Color.parseColor("#66FFFFFF")) // Subtle translucent white outline
                 }
             }
 
@@ -387,51 +449,51 @@ class StreamService : Service(), ConnectChecker {
                 orientation = LinearLayout.HORIZONTAL
                 gravity = Gravity.CENTER_VERTICAL
                 visibility = View.GONE
-                setPadding((6 * density).toInt(), (4 * density).toInt(), (6 * density).toInt(), (4 * density).toInt())
+                setPadding((8 * density).toInt(), (4 * density).toInt(), (8 * density).toInt(), (4 * density).toInt())
                 background = GradientDrawable().apply {
-                    setColor(Color.parseColor("#CC0F172A"))
+                    setColor(Color.parseColor("#DD0F172A"))
                     cornerRadius = 24 * density
                     setStroke((1.5f * density).toInt(), Color.parseColor("#44FFFFFF"))
                 }
             }
 
-            fun createCircleButton(icon: String, bgTint: String, borderTint: String): TextView {
-                val sizePx = (36 * density).toInt()
-                return TextView(this).apply {
-                    text = icon
-                    textSize = 17f
-                    gravity = Gravity.CENTER
-                    layoutParams = LinearLayout.LayoutParams(sizePx, sizePx).apply {
-                        setMargins((4 * density).toInt(), 0, (4 * density).toInt(), 0)
-                    }
-                    background = GradientDrawable().apply {
-                        shape = GradientDrawable.OVAL
-                        setColor(Color.parseColor(bgTint))
-                        setStroke((1.5f * density).toInt(), Color.parseColor(borderTint))
-                    }
-                }
-            }
-
-            // 1. Attractive circular Mic button (NO text)
+            // 1. Mic Button (Solid Black when ON, Solid Red when Muted — exact match to user image)
             val isMuted = isMicMutedState.value
-            val micBtn = createCircleButton(
-                icon = if (isMuted) "🔇" else "🎤",
-                bgTint = if (isMuted) "#44EF4444" else "#3310B981",
-                borderTint = if (isMuted) "#EF4444" else "#10B981"
-            ).apply {
+            val micBtn = ImageView(this).apply {
+                setImageResource(if (isMuted) R.drawable.ic_stream_mic_off else R.drawable.ic_stream_mic)
+                scaleType = ImageView.ScaleType.CENTER_INSIDE
+                val sizePx = (40 * density).toInt()
+                val padPx = (9 * density).toInt()
+                setPadding(padPx, padPx, padPx, padPx)
+                layoutParams = LinearLayout.LayoutParams(sizePx, sizePx).apply {
+                    setMargins((4 * density).toInt(), 0, (4 * density).toInt(), 0)
+                }
+                background = GradientDrawable().apply {
+                    shape = GradientDrawable.OVAL
+                    setColor(Color.parseColor(if (isMuted) "#DC2626" else "#18181B"))
+                    setStroke((1.5f * density).toInt(), Color.parseColor(if (isMuted) "#EF4444" else "#52525B"))
+                }
                 setOnClickListener {
                     toggleMic()
                 }
             }
             micButtonView = micBtn
 
-            // 2. Attractive circular Stop button (NO text)
-            val stopBtn = createCircleButton(
-                icon = "⏹",
-                bgTint = "#44EF4444",
-                borderTint = "#EF4444"
-            ).apply {
-                setTextColor(Color.parseColor("#EF4444"))
+            // 2. Stop Button (Solid Red with white square)
+            val stopBtn = ImageView(this).apply {
+                setImageResource(R.drawable.ic_stream_stop)
+                scaleType = ImageView.ScaleType.CENTER_INSIDE
+                val sizePx = (40 * density).toInt()
+                val padPx = (10 * density).toInt()
+                setPadding(padPx, padPx, padPx, padPx)
+                layoutParams = LinearLayout.LayoutParams(sizePx, sizePx).apply {
+                    setMargins((4 * density).toInt(), 0, (4 * density).toInt(), 0)
+                }
+                background = GradientDrawable().apply {
+                    shape = GradientDrawable.OVAL
+                    setColor(Color.parseColor("#DC2626"))
+                    setStroke((1.5f * density).toInt(), Color.parseColor("#EF4444"))
+                }
                 setOnClickListener {
                     stopStream()
                     stopSelf()
@@ -456,7 +518,7 @@ class StreamService : Service(), ConnectChecker {
                         initialTouchX = event.rawX
                         initialTouchY = event.rawY
                         isClick = true
-                        arrowButton.alpha = 0.85f
+                        arrowButton.alpha = 0.90f
                         true
                     }
                     MotionEvent.ACTION_MOVE -> {
@@ -475,17 +537,17 @@ class StreamService : Service(), ConnectChecker {
                             // Toggle expand/collapse on click
                             isOverlayExpanded = !isOverlayExpanded
                             if (isOverlayExpanded) {
-                                arrowButton.text = "❮"
+                                arrowButton.setImageResource(R.drawable.ic_stream_chevron_left)
                                 arrowButton.alpha = 1.0f
                                 optionsLayout.visibility = View.VISIBLE
                             } else {
-                                arrowButton.text = "❯"
-                                arrowButton.alpha = 0.40f
+                                arrowButton.setImageResource(R.drawable.ic_stream_chevron_right)
+                                arrowButton.alpha = 0.50f
                                 optionsLayout.visibility = View.GONE
                             }
                         } else {
                             if (!isOverlayExpanded) {
-                                arrowButton.alpha = 0.40f
+                                arrowButton.alpha = 0.50f
                             }
                         }
                         true
@@ -523,6 +585,7 @@ class StreamService : Service(), ConnectChecker {
         } catch (_: Exception) {}
         floatingLayout = null
         micButtonView = null
+        audioProcessor = null
     }
 
     override fun onDestroy() {

@@ -1,5 +1,6 @@
 package com.example.bgmistreamer.ui.main
 
+import android.content.Intent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -9,13 +10,16 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.example.bgmistreamer.StreamService
 import com.example.bgmistreamer.StreamViewModel
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(viewModel: StreamViewModel, modifier: Modifier = Modifier) {
+    val context = LocalContext.current
     Box(
         modifier = modifier
             .fillMaxSize()
@@ -149,7 +153,7 @@ fun SettingsScreen(viewModel: StreamViewModel, modifier: Modifier = Modifier) {
             Surface(
                 color = MaterialTheme.colorScheme.surfaceVariant,
                 shape = RoundedCornerShape(24.dp),
-                modifier = Modifier.fillMaxWidth()
+                modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp)
             ) {
                 Row(
                     modifier = Modifier.fillMaxWidth().padding(24.dp),
@@ -167,6 +171,83 @@ fun SettingsScreen(viewModel: StreamViewModel, modifier: Modifier = Modifier) {
                             viewModel.saveSettings()
                         }
                     )
+                }
+            }
+
+            // Audio Processing & Microphone Filters
+            Card(
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant
+                ),
+                shape = RoundedCornerShape(24.dp),
+                modifier = Modifier.fillMaxWidth().padding(bottom = 24.dp)
+            ) {
+                Column(modifier = Modifier.padding(24.dp)) {
+                    Text(
+                        "🎙️ Audio Processing Filters",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.padding(bottom = 16.dp)
+                    )
+
+                    // 1. Noise Suppression
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Column(modifier = Modifier.weight(1f).padding(end = 16.dp)) {
+                            Text("Noise Suppression", style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.SemiBold)
+                            Text("Eliminates background fan noise, hiss, and ambient static", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        Switch(
+                            checked = viewModel.isNoiseSuppressorEnabled.value,
+                            onCheckedChange = {
+                                viewModel.isNoiseSuppressorEnabled.value = it
+                                viewModel.saveSettings()
+                                if (StreamService.isStreamingState.value) {
+                                    val intent = Intent(context, StreamService::class.java).apply {
+                                        action = "UPDATE_AUDIO_SETTINGS"
+                                        putExtra("noiseSuppressor", it)
+                                        putExtra("echoCanceler", viewModel.isEchoCancelerEnabled.value)
+                                    }
+                                    context.startService(intent)
+                                }
+                            }
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(16.dp))
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    // 2. Echo Cancellation
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Column(modifier = Modifier.weight(1f).padding(end = 16.dp)) {
+                            Text("Echo Cancellation", style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.SemiBold)
+                            Text("Prevents speaker/game sound feedback from looping into mic", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        Switch(
+                            checked = viewModel.isEchoCancelerEnabled.value,
+                            onCheckedChange = {
+                                viewModel.isEchoCancelerEnabled.value = it
+                                viewModel.saveSettings()
+                                if (StreamService.isStreamingState.value) {
+                                    val intent = Intent(context, StreamService::class.java).apply {
+                                        action = "UPDATE_AUDIO_SETTINGS"
+                                        putExtra("noiseSuppressor", viewModel.isNoiseSuppressorEnabled.value)
+                                        putExtra("echoCanceler", it)
+                                    }
+                                    context.startService(intent)
+                                }
+                            }
+                        )
+                    }
                 }
             }
         }

@@ -171,6 +171,8 @@ fun MainScreen(viewModel: StreamViewModel, modifier: Modifier = Modifier) {
                 putExtra("quality", viewModel.selectedQuality.value)
                 putExtra("isLandscape", viewModel.isLandscapeOrientation.value)
                 putExtra("chromaKey", viewModel.isChromaKeyEnabled.value)
+                putExtra("noiseSuppressor", viewModel.isNoiseSuppressorEnabled.value)
+                putExtra("echoCanceler", viewModel.isEchoCancelerEnabled.value)
 
                 val uris = arrayListOf<String>()
                 val scales = FloatArray(viewModel.overlays.size)

@@ -32,6 +32,10 @@ class StreamViewModel(application: Application) : AndroidViewModel(application) 
     
     val isChromaKeyEnabled = mutableStateOf(prefs.getBoolean("isChromaKeyEnabled", false))
     
+    // Audio processing filters (Disabled by default so game sound is 100% full and unsuppressed)
+    val isNoiseSuppressorEnabled = mutableStateOf(prefs.getBoolean("isNoiseSuppressorEnabled", false))
+    val isEchoCancelerEnabled = mutableStateOf(prefs.getBoolean("isEchoCancelerEnabled", false))
+
     // Selected element for fine manual adjustment: "GAME_SCREEN" or an overlay ID
     val selectedElementId = mutableStateOf<String?>("GAME_SCREEN")
 
@@ -71,6 +75,8 @@ class StreamViewModel(application: Application) : AndroidViewModel(application) 
             putString("selectedQuality", selectedQuality.value)
             putBoolean("isLandscapeOrientation", isLandscapeOrientation.value)
             putBoolean("isChromaKeyEnabled", isChromaKeyEnabled.value)
+            putBoolean("isNoiseSuppressorEnabled", isNoiseSuppressorEnabled.value)
+            putBoolean("isEchoCancelerEnabled", isEchoCancelerEnabled.value)
             
             val overlaysJson = gson.toJson(overlays)
             putString("overlays", overlaysJson)
