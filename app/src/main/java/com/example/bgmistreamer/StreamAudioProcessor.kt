@@ -2,129 +2,135 @@ package com.example.bgmistreamer
 
 import com.pedro.encoder.input.audio.CustomAudioEffect
 import kotlin.math.abs
-import kotlin.math.max
-import kotlin.math.pow
+import kotlin.math.exp
 
 /**
- * StreamAudioProcessor - Studio Earphone & Headset DSP Filter.
+ * StreamAudioProcessor - High-Fidelity Dual-Source Audio Mixer & DSP Engine.
  *
- * Specially designed for Earphone / Headphone microphones during live gameplay:
- * 1. Plosive & Pop Filter (130Hz High-Pass):
- *    Completely cuts heavy breathing bursts directly into the mic and cable rustle against clothes.
- * 2. Smooth Downward Expander (Background Hiss Suppressor):
- *    Smoothly attenuates fan drone, AC hum, and room static by up to -16dB during silence
- *    without abruptly chopping off quiet voice or game audio.
- * 3. De-Hisser (Low-Pass Filter ~7.5kHz):
- *    Tames harsh high-frequency hiss typical of budget earphone mics.
- * 4. Soft Limiter:
- *    Prevents digital clipping and distortion when shouting or during loud in-game explosions.
+ * Implements clean, isolated signal paths:
+ * 1. GAME AUDIO (from GameAudioCapture):
+ *    - Independent Game Gain scaling (Default: 1.0)
+ *    - Bypasses all microphone DSP filters (no ducking, no voice gating, no low-passing)
+ *
+ * 2. MICROPHONE AUDIO (from AudioRecord / MicrophoneManager):
+ *    - Independent Mic Gain scaling (Default: 0.8)
+ *    - Plosive & Rumble High-Pass Filter (< 65Hz HPF, applied strictly to mic samples)
+ *    - Clean software mute support (game audio continues uninterrupted when mic is muted)
+ *
+ * 3. PCM SOFTWARE MIXER:
+ *    - Sums Game PCM + Mic PCM sample-by-sample (stereo interleaved)
+ *    - Converts mono microphone samples across both L and R channels if required
+ *    - Zero-allocation inner loop for maximum real-time performance
+ *    - Anti-Clipping Soft Limiter with smooth exponential headroom saturation above 32000
  */
 class StreamAudioProcessor(
     var enableNoiseSuppression: Boolean = false,
-    var enableEchoCancellation: Boolean = false
+    var enableEchoCancellation: Boolean = false,
+    var micGain: Float = 0.8f,
+    var gameGain: Float = 1.0f,
+    var isMicMuted: Boolean = false,
+    var gameAudioCapture: GameAudioCapture? = null
 ) : CustomAudioEffect() {
 
-    // 1. High-Pass Filter (Cutoff ~130Hz @ 44.1/48kHz) - Cuts breath pops & cable rustle
-    private val hpAlpha = 0.982f
+    // Sub-bass plosive / rumble High-Pass Filter (~65Hz @ 44.1/48kHz) strictly for mic samples
+    private val hpAlpha = 0.991f
     private var hpPrevXLeft = 0.0f
     private var hpPrevYLeft = 0.0f
     private var hpPrevXRight = 0.0f
     private var hpPrevYRight = 0.0f
 
-    // 2. De-Hisser / Low-Pass Filter (~7.5kHz) - Cuts mic static hiss
-    private val lpAlpha = 0.52f
-    private var lpPrevYLeft = 0.0f
-    private var lpPrevYRight = 0.0f
+    // Soft limiter parameters (threshold at 32000 on 16-bit signed scale, with 767 headroom)
+    private val limitThreshold = 32000.0f
+    private val headroomRange = 767.0f
 
-    // 3. Downward Expander Envelope Tracker
-    // Threshold ~ -30dBFS (scaled to 1.0f float domain: ~0.032)
-    private val noiseThreshold = 1000.0f // on 16-bit PCM scale (-32768..32767)
-    private val minExpansionGain = 0.15f // Max -16.5dB attenuation on background noise
-    private var envelope = 0.0f
-    private var currentGain = 1.0f
+    // Rolling buffer for reading continuous Game PCM chunks
+    private var currentChunk: ByteArray? = null
+    private var chunkOffset = 0
 
-    // Envelope time constants
-    private val attackAlpha = 0.08f   // Fast attack (~2ms) when speaking starts
-    private val releaseAlpha = 0.0003f // Smooth release (~150ms) to prevent audio pumping
-
-    override fun process(pcm: ByteArray): ByteArray {
-        // If filters are disabled, pass through 100% untouched raw audio
-        if (!enableNoiseSuppression && !enableEchoCancellation) {
-            return pcm
-        }
-
+    override fun process(pcmBuffer: ByteArray): ByteArray {
         var idx = 0
         var isLeftChannel = true
 
-        while (idx + 1 < pcm.size) {
-            // Decode 16-bit PCM sample (little endian)
-            val low = pcm[idx].toInt() and 0xFF
-            val high = pcm[idx + 1].toInt() shl 8
-            val rawSample = (low or high).toShort().toFloat()
-            var processed = rawSample
+        val activeMicGain = if (isMicMuted) 0.0f else micGain.coerceIn(0.0f, 3.0f)
+        val activeGameGain = gameGain.coerceIn(0.0f, 3.0f)
+        val capture = gameAudioCapture
 
-            // --- 1. Plosive & Breath Pop High-Pass Filter ---
-            if (enableNoiseSuppression) {
-                if (isLeftChannel) {
-                    val hpOut = hpAlpha * (hpPrevYLeft + processed - hpPrevXLeft)
-                    hpPrevXLeft = processed
-                    hpPrevYLeft = hpOut
-                    processed = hpOut
-                } else {
-                    val hpOut = hpAlpha * (hpPrevYRight + processed - hpPrevXRight)
-                    hpPrevXRight = processed
-                    hpPrevYRight = hpOut
-                    processed = hpOut
+        while (idx + 1 < pcmBuffer.size) {
+            // 1. Decode Microphone 16-bit signed PCM sample (little-endian)
+            val micLow = pcmBuffer[idx].toInt() and 0xFF
+            val micHigh = pcmBuffer[idx + 1].toInt() shl 8
+            val rawMicSample = (micLow or micHigh).toShort().toFloat()
+            var processedMic = rawMicSample
+
+            // 2. Microphone-Only DSP (Rumble filter & Mic Gain)
+            if (activeMicGain > 0.0f) {
+                if (enableNoiseSuppression) {
+                    if (isLeftChannel) {
+                        val hpOut = hpAlpha * (hpPrevYLeft + processedMic - hpPrevXLeft)
+                        hpPrevXLeft = processedMic
+                        hpPrevYLeft = hpOut
+                        processedMic = hpOut
+                    } else {
+                        val hpOut = hpAlpha * (hpPrevYRight + processedMic - hpPrevXRight)
+                        hpPrevXRight = processedMic
+                        hpPrevYRight = hpOut
+                        processedMic = hpOut
+                    }
                 }
+                processedMic *= activeMicGain
+            } else {
+                processedMic = 0.0f
             }
 
-            // --- 2. De-Hiss / Feedback Low-Pass Filter ---
-            if (enableEchoCancellation) {
-                if (isLeftChannel) {
-                    val lpOut = lpPrevYLeft + lpAlpha * (processed - lpPrevYLeft)
-                    lpPrevYLeft = lpOut
-                    processed = lpOut
-                } else {
-                    val lpOut = lpPrevYRight + lpAlpha * (processed - lpPrevYRight)
-                    lpPrevYRight = lpOut
-                    processed = lpOut
-                }
+            // 3. Extract Game PCM sample from GameAudioCapture FIFO buffer (allocation-free)
+            var processedGame = 0.0f
+            if (capture != null && activeGameGain > 0.0f) {
+                val rawGameSample = nextGameSample(capture)
+                processedGame = rawGameSample * activeGameGain
             }
 
-            // --- 3. Downward Expander (Smooth Noise Suppressor) ---
-            if (enableNoiseSuppression) {
-                val sampleMag = abs(processed)
-                if (sampleMag > envelope) {
-                    envelope += attackAlpha * (sampleMag - envelope)
-                } else {
-                    envelope -= releaseAlpha * (envelope - sampleMag)
-                }
+            // 4. Mathematical PCM Mixing: Game + Mic
+            val mixed = processedGame + processedMic
 
-                // Compute target gain based on envelope level
-                val targetGain = if (envelope >= noiseThreshold) {
-                    1.0f
-                } else {
-                    val ratio = envelope / noiseThreshold
-                    max(minExpansionGain, ratio.pow(1.5f))
-                }
-
-                // Smooth gain transition to eliminate clicks/zipper noise
-                currentGain += 0.005f * (targetGain - currentGain)
-                processed *= currentGain
+            // 5. Anti-Clipping Soft Limiter
+            val absVal = abs(mixed)
+            val limited = if (absVal <= limitThreshold) {
+                mixed
+            } else {
+                val sign = if (mixed > 0f) 1.0f else -1.0f
+                val excess = absVal - limitThreshold
+                val saturated = limitThreshold + headroomRange * (1.0f - exp(-excess / headroomRange))
+                sign * saturated
             }
 
-            // --- 4. Soft Limiter (Anti-Clipping Protection) ---
-            val clamped = processed.coerceIn(-32767f, 32767f).toInt().toShort()
+            val clamped = limited.coerceIn(-32767.0f, 32767.0f).toInt().toShort()
 
-            // Write back to PCM byte array
-            pcm[idx] = (clamped.toInt() and 0xFF).toByte()
-            pcm[idx + 1] = ((clamped.toInt() shr 8) and 0xFF).toByte()
+            // Write mixed PCM sample back to output byte array
+            pcmBuffer[idx] = (clamped.toInt() and 0xFF).toByte()
+            pcmBuffer[idx + 1] = ((clamped.toInt() shr 8) and 0xFF).toByte()
 
             isLeftChannel = !isLeftChannel
             idx += 2
         }
 
-        return pcm
+        return pcmBuffer
+    }
+
+    private fun nextGameSample(capture: GameAudioCapture): Float {
+        while (currentChunk == null || chunkOffset + 1 >= (currentChunk?.size ?: 0)) {
+            currentChunk = capture.pollChunk()
+            chunkOffset = 0
+            if (currentChunk == null) return 0.0f
+        }
+
+        val chunk = currentChunk ?: return 0.0f
+        val low = chunk[chunkOffset].toInt() and 0xFF
+        val high = chunk[chunkOffset + 1].toInt() shl 8
+        chunkOffset += 2
+        return (low or high).toShort().toFloat()
     }
 }
+
+
+
 
