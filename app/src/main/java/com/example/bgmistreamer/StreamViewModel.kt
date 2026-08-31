@@ -2,6 +2,7 @@ package com.example.bgmistreamer
 
 import android.app.Application
 import android.content.Context
+import android.content.Intent
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.lifecycle.AndroidViewModel
@@ -25,9 +26,47 @@ class StreamViewModel(application: Application) : AndroidViewModel(application) 
     val rtmpUrl = mutableStateOf(prefs.getString("rtmpUrl", "rtmp://a.rtmp.youtube.com/live2/") ?: "")
     val streamKey = mutableStateOf(prefs.getString("streamKey", "") ?: "")
     
-    val qualities = listOf("720p 30fps", "1080p 60fps", "1440p 60fps", "4K 60fps")
+    val qualities = listOf("720p 30fps", "1080p 60fps (8 Mbps)", "1080p 60fps (10 Mbps)", "1080p 60fps (12 Mbps)", "1440p 60fps", "4K 60fps")
     val selectedQuality = mutableStateOf(prefs.getString("selectedQuality", qualities[1]) ?: qualities[1])
     
+    val downsampleTestModes = listOf(
+        "TEST A: Phase 16 Baseline (Linear + Sharpen OFF)",
+        "TEST B: Moderate Sharpness (Linear + Sharpen 0.06)",
+        "TEST C: High Bitrate (10 Mbps + Sharpen 0.06)",
+        "TEST D: Ultra Bitrate (12 Mbps + Sharpen 0.06)",
+        "DIAGNOSTIC: High-Quality GPU Downsample",
+        "DIAGNOSTIC: Nearest Reference"
+    )
+    val selectedDownsampleTestMode = mutableStateOf(
+        prefs.getString("selectedDownsampleTestMode", downsampleTestModes[0]) ?: downsampleTestModes[0]
+    )
+
+    // Phase 18, 22 & 24: Gameplay Color & Sharpness Filter
+    companion object {
+        const val GAMEPLAY_GAMMA_DEFAULT = 0.16f
+        const val GAMEPLAY_CONTRAST_DEFAULT = 0.04f
+        const val GAMEPLAY_BRIGHTNESS_DEFAULT = 0.0100f
+        const val GAMEPLAY_SATURATION_DEFAULT = 0.94f
+        const val GAMEPLAY_SHARPNESS_DEFAULT = 0.80f
+    }
+
+    val isGameplayFilterEnabled = mutableStateOf(prefs.getBoolean("isGameplayFilterEnabled", true))
+    val isExtremeFilterTestEnabled = mutableStateOf(false)
+    val extremeFilterTestIndex = mutableStateOf(1)
+    val gameplayGamma = mutableStateOf(prefs.getFloat("gameplayGamma", GAMEPLAY_GAMMA_DEFAULT))
+    val gameplayContrast = mutableStateOf(prefs.getFloat("gameplayContrast", GAMEPLAY_CONTRAST_DEFAULT))
+    val gameplayBrightness = mutableStateOf(prefs.getFloat("gameplayBrightness", GAMEPLAY_BRIGHTNESS_DEFAULT))
+    val gameplaySaturation = mutableStateOf(prefs.getFloat("gameplaySaturation", GAMEPLAY_SATURATION_DEFAULT))
+    val gameplaySharpness = mutableStateOf(prefs.getFloat("gameplaySharpness", GAMEPLAY_SHARPNESS_DEFAULT))
+
+    val isTestPatternEnabled = mutableStateOf(false)
+
+    val sharpenModes = listOf("OFF (0.00)", "LOW (0.06 - Diagnostic)", "MEDIUM (0.11)")
+    val selectedSharpenMode = mutableStateOf(prefs.getString("selectedSharpenMode", sharpenModes[0]) ?: sharpenModes[0])
+
+    val filterModes = listOf("LINEAR (GL_LINEAR)", "NEAREST (GL_NEAREST - Diagnostic)")
+    val selectedFilterMode = mutableStateOf(prefs.getString("selectedFilterMode", filterModes[0]) ?: filterModes[0])
+
     val isLandscapeOrientation = mutableStateOf(prefs.getBoolean("isLandscapeOrientation", true))
     
     val isChromaKeyEnabled = mutableStateOf(prefs.getBoolean("isChromaKeyEnabled", false))
@@ -54,6 +93,17 @@ class StreamViewModel(application: Application) : AndroidViewModel(application) 
         selectedElementId.value = id
     }
 
+    fun resetGameplayFilterDefaults() {
+        isGameplayFilterEnabled.value = true
+        isExtremeFilterTestEnabled.value = false
+        gameplayGamma.value = GAMEPLAY_GAMMA_DEFAULT
+        gameplayContrast.value = GAMEPLAY_CONTRAST_DEFAULT
+        gameplayBrightness.value = GAMEPLAY_BRIGHTNESS_DEFAULT
+        gameplaySaturation.value = GAMEPLAY_SATURATION_DEFAULT
+        gameplaySharpness.value = GAMEPLAY_SHARPNESS_DEFAULT
+        onFilterChanged()
+    }
+
     fun updateGameScreenPosition(x: Float, y: Float) {
         gameScreenXPercent.value = x.coerceIn(0f, 100f)
         gameScreenYPercent.value = y.coerceIn(0f, 100f)
@@ -73,6 +123,16 @@ class StreamViewModel(application: Application) : AndroidViewModel(application) 
             putString("rtmpUrl", rtmpUrl.value)
             putString("streamKey", streamKey.value)
             putString("selectedQuality", selectedQuality.value)
+            putString("selectedDownsampleTestMode", selectedDownsampleTestMode.value)
+            putBoolean("isGameplayFilterEnabled", isGameplayFilterEnabled.value)
+            putFloat("gameplayGamma", gameplayGamma.value)
+            putFloat("gameplayContrast", gameplayContrast.value)
+            putFloat("gameplayBrightness", gameplayBrightness.value)
+            putFloat("gameplaySaturation", gameplaySaturation.value)
+            putFloat("gameplaySharpness", gameplaySharpness.value)
+            putBoolean("isTestPatternEnabled", isTestPatternEnabled.value)
+            putString("selectedSharpenMode", selectedSharpenMode.value)
+            putString("selectedFilterMode", selectedFilterMode.value)
             putBoolean("isLandscapeOrientation", isLandscapeOrientation.value)
             putBoolean("isChromaKeyEnabled", isChromaKeyEnabled.value)
             putBoolean("isNoiseSuppressorEnabled", isNoiseSuppressorEnabled.value)
@@ -128,6 +188,67 @@ class StreamViewModel(application: Application) : AndroidViewModel(application) 
         if (index != -1) {
             overlays[index] = overlays[index].copy(chromaKey = enabled)
             saveSettings()
+        }
+    }
+
+    fun onFilterChanged() {
+        saveSettings()
+        StreamFilterState.updateFromViewModel(this)
+        if (StreamService.isStreamingState.value) {
+            try {
+                val app = getApplication<Application>()
+                val intent = Intent(app, StreamService::class.java).apply {
+                    action = "UPDATE_OVERLAYS"
+                    val uris = arrayListOf<String>()
+                    val scales = FloatArray(overlays.size)
+                    val xPos = FloatArray(overlays.size)
+                    val yPos = FloatArray(overlays.size)
+                    val chromaKeys = BooleanArray(overlays.size)
+
+                    overlays.forEachIndexed { index, overlay ->
+                        uris.add(overlay.uri)
+                        scales[index] = overlay.scalePercent
+                        xPos[index] = overlay.xPercent
+                        yPos[index] = overlay.yPercent
+                        chromaKeys[index] = overlay.chromaKey
+                    }
+
+                    val sharpenModeParam = when {
+                        selectedSharpenMode.value.contains("LOW", ignoreCase = true) -> "LOW"
+                        selectedSharpenMode.value.contains("MEDIUM", ignoreCase = true) -> "MEDIUM"
+                        else -> "OFF"
+                    }
+                    val filterModeParam = when {
+                        selectedFilterMode.value.contains("NEAREST", ignoreCase = true) -> "NEAREST"
+                        else -> "LINEAR"
+                    }
+
+                    putStringArrayListExtra("overlayUris", uris)
+                    putExtra("overlayScales", scales)
+                    putExtra("overlayX", xPos)
+                    putExtra("overlayY", yPos)
+                    putExtra("overlayChromaKeys", chromaKeys)
+
+                    putExtra("gameScreenScale", gameScreenScalePercent.value)
+                    putExtra("gameScreenX", gameScreenXPercent.value)
+                    putExtra("gameScreenY", gameScreenYPercent.value)
+                    putExtra("downsampleTestMode", selectedDownsampleTestMode.value)
+                    putExtra("isGameplayFilterEnabled", isGameplayFilterEnabled.value)
+                    putExtra("isExtremeTestMode", isExtremeFilterTestEnabled.value)
+                    putExtra("extremeTestModeIndex", extremeFilterTestIndex.value)
+                    putExtra("gameplayGamma", gameplayGamma.value)
+                    putExtra("gameplayContrast", gameplayContrast.value)
+                    putExtra("gameplayBrightness", gameplayBrightness.value)
+                    putExtra("gameplaySaturation", gameplaySaturation.value)
+                    putExtra("gameplaySharpness", gameplaySharpness.value)
+                    putExtra("isTestPattern", isTestPatternEnabled.value)
+                    putExtra("sharpenMode", sharpenModeParam)
+                    putExtra("filterMode", filterModeParam)
+                }
+                app.startService(intent)
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
         }
     }
 }

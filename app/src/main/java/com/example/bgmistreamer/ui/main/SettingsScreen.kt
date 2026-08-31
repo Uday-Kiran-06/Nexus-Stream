@@ -174,6 +174,457 @@ fun SettingsScreen(viewModel: StreamViewModel, modifier: Modifier = Modifier) {
                 }
             }
 
+            // Phase 17 — Controlled Downsampling Filter A/B/C/D/E Test
+            Card(
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant
+                ),
+                shape = RoundedCornerShape(24.dp),
+                modifier = Modifier.fillMaxWidth().padding(bottom = 24.dp)
+            ) {
+                Column(modifier = Modifier.padding(24.dp)) {
+                    Text(
+                        "🔬 Phase 17 Downsampling Filter Test",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.padding(bottom = 12.dp)
+                    )
+
+                    Text(
+                        "Select Downsampling Mode (2400x1080 -> 1920x864):",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier.padding(bottom = 8.dp)
+                    )
+
+                    viewModel.downsampleTestModes.forEach { mode ->
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 2.dp)
+                        ) {
+                            RadioButton(
+                                selected = viewModel.selectedDownsampleTestMode.value == mode,
+                                onClick = {
+                                    viewModel.selectedDownsampleTestMode.value = mode
+                                    viewModel.saveSettings()
+                                }
+                            )
+                            Text(
+                                text = mode,
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = if (viewModel.selectedDownsampleTestMode.value == mode)
+                                    MaterialTheme.colorScheme.onSurface
+                                else MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(12.dp))
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                "📐 GPU Resolution Test Pattern",
+                                style = MaterialTheme.typography.bodyLarge,
+                                fontWeight = FontWeight.SemiBold,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                            Text(
+                                "Procedural 1px/2px/Nyquist/diagonal pattern directly on GPU (Step 3)",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Switch(
+                            checked = viewModel.isTestPatternEnabled.value,
+                            onCheckedChange = {
+                                viewModel.isTestPatternEnabled.value = it
+                                viewModel.saveSettings()
+                            }
+                        )
+                    }
+                }
+            }
+
+            // ==========================================
+            // FILTER SETTINGS SECTION (Phase 18C Clean Layout)
+            // ==========================================
+            Card(
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant
+                ),
+                shape = RoundedCornerShape(24.dp),
+                modifier = Modifier.fillMaxWidth().padding(bottom = 24.dp)
+            ) {
+                Column(modifier = Modifier.padding(24.dp)) {
+                    // Header with Enable Filter ON / OFF Switch
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Column(modifier = Modifier.weight(1f).padding(end = 16.dp)) {
+                            Text(
+                                "FILTER SETTINGS",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                            Text(
+                                "Enable Filter",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                        }
+                        Switch(
+                            checked = viewModel.isGameplayFilterEnabled.value,
+                            onCheckedChange = {
+                                viewModel.isGameplayFilterEnabled.value = it
+                                viewModel.onFilterChanged()
+                            }
+                        )
+                    }
+
+                    val isEnabled = viewModel.isGameplayFilterEnabled.value
+
+                    if (com.example.bgmistreamer.BuildConfig.DEBUG && isEnabled) {
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Card(
+                            colors = CardDefaults.cardColors(
+                                containerColor = if (viewModel.isExtremeFilterTestEnabled.value)
+                                    MaterialTheme.colorScheme.errorContainer
+                                else MaterialTheme.colorScheme.surface.copy(alpha = 0.6f)
+                            ),
+                            shape = RoundedCornerShape(14.dp),
+                            modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)
+                        ) {
+                            Column(modifier = Modifier.fillMaxWidth().padding(14.dp)) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
+                                        Text(
+                                            "🧪 FORENSIC PROOF TEST (Extreme)",
+                                            style = MaterialTheme.typography.titleSmall,
+                                            fontWeight = FontWeight.Bold,
+                                            color = if (viewModel.isExtremeFilterTestEnabled.value)
+                                                MaterialTheme.colorScheme.onErrorContainer
+                                            else MaterialTheme.colorScheme.primary
+                                        )
+                                        Text(
+                                            "Hard-codes gameplay region to solid proof color to verify active encoder render path in YouTube.",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = if (viewModel.isExtremeFilterTestEnabled.value)
+                                                MaterialTheme.colorScheme.onErrorContainer.copy(alpha = 0.8f)
+                                            else MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                    Switch(
+                                        checked = viewModel.isExtremeFilterTestEnabled.value,
+                                        onCheckedChange = {
+                                            viewModel.isExtremeFilterTestEnabled.value = it
+                                            viewModel.onFilterChanged()
+                                        }
+                                    )
+                                }
+
+                                if (viewModel.isExtremeFilterTestEnabled.value) {
+                                    Spacer(modifier = Modifier.height(12.dp))
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        val modes = listOf(1 to "TEST 1 (RED)", 2 to "TEST 2 (BLUE)", 3 to "TEST 3 (GREEN)")
+                                        modes.forEach { (idx, label) ->
+                                            val isSelected = viewModel.extremeFilterTestIndex.value == idx
+                                            FilledTonalButton(
+                                                onClick = {
+                                                    viewModel.extremeFilterTestIndex.value = idx
+                                                    viewModel.onFilterChanged()
+                                                },
+                                                colors = ButtonDefaults.filledTonalButtonColors(
+                                                    containerColor = if (isSelected) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.surfaceVariant
+                                                ),
+                                                shape = RoundedCornerShape(10.dp),
+                                                modifier = Modifier.weight(1f).height(38.dp),
+                                                contentPadding = PaddingValues(horizontal = 4.dp, vertical = 2.dp)
+                                            ) {
+                                                Text(
+                                                    label,
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                                    color = if (isSelected) MaterialTheme.colorScheme.onError else MaterialTheme.colorScheme.onSurfaceVariant
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 16.dp)
+                    ) {
+                        // Section: Color
+                        Text(
+                            "Color",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = if (isEnabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                            modifier = Modifier.padding(bottom = 8.dp)
+                        )
+
+                        // 1. Gamma Slider
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                "Gamma",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = if (isEnabled) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+                            )
+                            Text(
+                                "%.2f".format(viewModel.gameplayGamma.value),
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = if (isEnabled) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                                fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
+                            )
+                        }
+                        Slider(
+                            value = viewModel.gameplayGamma.value,
+                            onValueChange = {
+                                viewModel.gameplayGamma.value = (it * 100).toInt() / 100f
+                                viewModel.onFilterChanged()
+                            },
+                            valueRange = 0.0f..0.40f,
+                            enabled = isEnabled && !viewModel.isExtremeFilterTestEnabled.value,
+                            modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)
+                        )
+
+                        // 2. Contrast Slider
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                "Contrast",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = if (isEnabled) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+                            )
+                            Text(
+                                "%.2f".format(viewModel.gameplayContrast.value),
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = if (isEnabled) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                                fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
+                            )
+                        }
+                        Slider(
+                            value = viewModel.gameplayContrast.value,
+                            onValueChange = {
+                                viewModel.gameplayContrast.value = (it * 100).toInt() / 100f
+                                viewModel.onFilterChanged()
+                            },
+                            valueRange = -0.10f..0.20f,
+                            enabled = isEnabled && !viewModel.isExtremeFilterTestEnabled.value,
+                            modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)
+                        )
+
+                        // 3. Brightness Slider
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                "Brightness",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = if (isEnabled) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+                            )
+                            Text(
+                                "%.4f".format(viewModel.gameplayBrightness.value),
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = if (isEnabled) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                                fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
+                            )
+                        }
+                        Slider(
+                            value = viewModel.gameplayBrightness.value,
+                            onValueChange = {
+                                viewModel.gameplayBrightness.value = (it * 10000).toInt() / 10000f
+                                viewModel.onFilterChanged()
+                            },
+                            valueRange = -0.05f..0.05f,
+                            enabled = isEnabled && !viewModel.isExtremeFilterTestEnabled.value,
+                            modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)
+                        )
+
+                        // 4. Saturation Slider
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                "Saturation",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = if (isEnabled) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+                            )
+                            Text(
+                                "%.2f".format(viewModel.gameplaySaturation.value),
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = if (isEnabled) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                                fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
+                            )
+                        }
+                        Slider(
+                            value = viewModel.gameplaySaturation.value,
+                            onValueChange = {
+                                viewModel.gameplaySaturation.value = (it * 100).toInt() / 100f
+                                viewModel.onFilterChanged()
+                            },
+                            valueRange = 0.50f..1.50f,
+                            enabled = isEnabled && !viewModel.isExtremeFilterTestEnabled.value,
+                            modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)
+                        )
+
+                        // Section: Sharpness
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            "Sharpness",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = if (isEnabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                            modifier = Modifier.padding(bottom = 8.dp)
+                        )
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                "Sharpness",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = if (isEnabled) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+                            )
+                            Text(
+                                "%.2f".format(viewModel.gameplaySharpness.value),
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = if (isEnabled) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                                fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
+                            )
+                        }
+                        Slider(
+                            value = viewModel.gameplaySharpness.value,
+                            onValueChange = {
+                                viewModel.gameplaySharpness.value = (it * 100).toInt() / 100f
+                                viewModel.onFilterChanged()
+                            },
+                            valueRange = 0.0f..1.0f,
+                            enabled = isEnabled && !viewModel.isExtremeFilterTestEnabled.value,
+                            modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)
+                        )
+
+                        // Divider
+                        HorizontalDivider(
+                            modifier = Modifier.padding(vertical = 16.dp),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.2f)
+                        )
+
+                        // Current Values Summary Table
+                        Text(
+                            "Current Values",
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = FontWeight.Bold,
+                            color = if (isEnabled) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                            modifier = Modifier.padding(bottom = 8.dp)
+                        )
+
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .background(
+                                    MaterialTheme.colorScheme.surface.copy(alpha = 0.5f),
+                                    RoundedCornerShape(12.dp)
+                                )
+                                .padding(horizontal = 16.dp, vertical = 12.dp)
+                        ) {
+                            @Composable
+                            fun ValueItem(label: String, value: String) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        label,
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                    Text(
+                                        value,
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        fontWeight = FontWeight.Bold,
+                                        fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                                        color = if (isEnabled) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+                                    )
+                                }
+                            }
+
+                            ValueItem("Gamma", "%.2f".format(viewModel.gameplayGamma.value))
+                            ValueItem("Contrast", "%.2f".format(viewModel.gameplayContrast.value))
+                            ValueItem("Brightness", "%.4f".format(viewModel.gameplayBrightness.value))
+                            ValueItem("Saturation", "%.2f".format(viewModel.gameplaySaturation.value))
+                            ValueItem("Sharpness", "%.2f".format(viewModel.gameplaySharpness.value))
+                        }
+
+                        // Divider
+                        HorizontalDivider(
+                            modifier = Modifier.padding(vertical = 16.dp),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.2f)
+                        )
+
+                        // Reset to Default Button
+                        OutlinedButton(
+                            onClick = {
+                                viewModel.resetGameplayFilterDefaults()
+                                android.widget.Toast.makeText(
+                                    context,
+                                    "Filter settings reset to defaults",
+                                    android.widget.Toast.LENGTH_SHORT
+                                ).show()
+                            },
+                            shape = RoundedCornerShape(14.dp),
+                            modifier = Modifier.fillMaxWidth().height(48.dp)
+                        ) {
+                            Text("Reset to Default", fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
+            }
+
             // Audio Processing & Microphone Filters
             Card(
                 colors = CardDefaults.cardColors(

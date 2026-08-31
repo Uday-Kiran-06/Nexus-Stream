@@ -7,11 +7,16 @@ import android.net.Uri
 import android.os.Build
 import android.provider.Settings
 import android.widget.Toast
+import android.util.Log
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
+import com.example.bgmistreamer.StreamFilterState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.*
@@ -26,6 +31,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
@@ -98,6 +104,7 @@ fun MainScreen(viewModel: StreamViewModel, modifier: Modifier = Modifier) {
     var durationText by remember { mutableStateOf("00:00:00") }
 
     fun syncOverlaysWithService() {
+        StreamFilterState.updateFromViewModel(viewModel)
         if (!StreamService.isStreamingState.value) return
         val intent = Intent(context, StreamService::class.java).apply {
             action = "UPDATE_OVERLAYS"
@@ -115,6 +122,16 @@ fun MainScreen(viewModel: StreamViewModel, modifier: Modifier = Modifier) {
                 chromaKeys[index] = overlay.chromaKey
             }
 
+            val sharpenModeParam = when {
+                viewModel.selectedSharpenMode.value.contains("LOW", ignoreCase = true) -> "LOW"
+                viewModel.selectedSharpenMode.value.contains("MEDIUM", ignoreCase = true) -> "MEDIUM"
+                else -> "OFF"
+            }
+            val filterModeParam = when {
+                viewModel.selectedFilterMode.value.contains("NEAREST", ignoreCase = true) -> "NEAREST"
+                else -> "LINEAR"
+            }
+
             putStringArrayListExtra("overlayUris", uris)
             putExtra("overlayScales", scales)
             putExtra("overlayX", xPos)
@@ -124,7 +141,20 @@ fun MainScreen(viewModel: StreamViewModel, modifier: Modifier = Modifier) {
             putExtra("gameScreenScale", viewModel.gameScreenScalePercent.value)
             putExtra("gameScreenX", viewModel.gameScreenXPercent.value)
             putExtra("gameScreenY", viewModel.gameScreenYPercent.value)
+            putExtra("downsampleTestMode", viewModel.selectedDownsampleTestMode.value)
+            putExtra("isGameplayFilterEnabled", viewModel.isGameplayFilterEnabled.value)
+            putExtra("isExtremeTestMode", viewModel.isExtremeFilterTestEnabled.value)
+            putExtra("extremeTestModeIndex", viewModel.extremeFilterTestIndex.value)
+            putExtra("gameplayGamma", viewModel.gameplayGamma.value)
+            putExtra("gameplayContrast", viewModel.gameplayContrast.value)
+            putExtra("gameplayBrightness", viewModel.gameplayBrightness.value)
+            putExtra("gameplaySaturation", viewModel.gameplaySaturation.value)
+            putExtra("gameplaySharpness", viewModel.gameplaySharpness.value)
+            putExtra("isTestPattern", viewModel.isTestPatternEnabled.value)
+            putExtra("sharpenMode", sharpenModeParam)
+            putExtra("filterMode", filterModeParam)
         }
+        android.util.Log.i("MainScreen", "SYNC_EXTREME_VALUE: ${viewModel.isExtremeFilterTestEnabled.value}, SYNC_FILTER_ENABLED: ${viewModel.isGameplayFilterEnabled.value}")
         context.startService(intent)
     }
 
@@ -133,7 +163,18 @@ fun MainScreen(viewModel: StreamViewModel, modifier: Modifier = Modifier) {
         viewModel.overlays.map { "${it.id}_${it.xPercent}_${it.yPercent}_${it.scalePercent}_${it.chromaKey}" },
         viewModel.gameScreenScalePercent.value,
         viewModel.gameScreenXPercent.value,
-        viewModel.gameScreenYPercent.value
+        viewModel.gameScreenYPercent.value,
+        viewModel.selectedDownsampleTestMode.value,
+        viewModel.isGameplayFilterEnabled.value,
+        viewModel.isExtremeFilterTestEnabled.value,
+        viewModel.gameplayGamma.value,
+        viewModel.gameplayContrast.value,
+        viewModel.gameplayBrightness.value,
+        viewModel.gameplaySaturation.value,
+        viewModel.gameplaySharpness.value,
+        viewModel.isTestPatternEnabled.value,
+        viewModel.selectedSharpenMode.value,
+        viewModel.selectedFilterMode.value
     ) {
         if (isStreaming) {
             delay(150)
@@ -163,6 +204,16 @@ fun MainScreen(viewModel: StreamViewModel, modifier: Modifier = Modifier) {
             val cleanKey = viewModel.streamKey.value.trim().trimStart('/')
             val fullUrl = if (cleanKey.isNotEmpty()) "$cleanBase/$cleanKey" else cleanBase
 
+            val sharpenModeParam = when {
+                viewModel.selectedSharpenMode.value.contains("LOW", ignoreCase = true) -> "LOW"
+                viewModel.selectedSharpenMode.value.contains("MEDIUM", ignoreCase = true) -> "MEDIUM"
+                else -> "OFF"
+            }
+            val filterModeParam = when {
+                viewModel.selectedFilterMode.value.contains("NEAREST", ignoreCase = true) -> "NEAREST"
+                else -> "LINEAR"
+            }
+
             val intent = Intent(context, StreamService::class.java).apply {
                 action = "START_STREAM"
                 putExtra("resultCode", result.resultCode)
@@ -173,6 +224,18 @@ fun MainScreen(viewModel: StreamViewModel, modifier: Modifier = Modifier) {
                 putExtra("chromaKey", viewModel.isChromaKeyEnabled.value)
                 putExtra("noiseSuppressor", viewModel.isNoiseSuppressorEnabled.value)
                 putExtra("echoCanceler", viewModel.isEchoCancelerEnabled.value)
+                putExtra("downsampleTestMode", viewModel.selectedDownsampleTestMode.value)
+                putExtra("isGameplayFilterEnabled", viewModel.isGameplayFilterEnabled.value)
+                putExtra("isExtremeTestMode", viewModel.isExtremeFilterTestEnabled.value)
+                putExtra("extremeTestModeIndex", viewModel.extremeFilterTestIndex.value)
+                putExtra("gameplayGamma", viewModel.gameplayGamma.value)
+                putExtra("gameplayContrast", viewModel.gameplayContrast.value)
+                putExtra("gameplayBrightness", viewModel.gameplayBrightness.value)
+                putExtra("gameplaySaturation", viewModel.gameplaySaturation.value)
+                putExtra("gameplaySharpness", viewModel.gameplaySharpness.value)
+                putExtra("isTestPattern", viewModel.isTestPatternEnabled.value)
+                putExtra("sharpenMode", sharpenModeParam)
+                putExtra("filterMode", filterModeParam)
 
                 val uris = arrayListOf<String>()
                 val scales = FloatArray(viewModel.overlays.size)
@@ -197,6 +260,8 @@ fun MainScreen(viewModel: StreamViewModel, modifier: Modifier = Modifier) {
                 putExtra("gameScreenScale", viewModel.gameScreenScalePercent.value)
                 putExtra("gameScreenX", viewModel.gameScreenXPercent.value)
                 putExtra("gameScreenY", viewModel.gameScreenYPercent.value)
+                putExtra("sharpenMode", sharpenModeParam)
+                putExtra("filterMode", filterModeParam)
             }
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 context.startForegroundService(intent)
@@ -262,8 +327,14 @@ fun MainScreen(viewModel: StreamViewModel, modifier: Modifier = Modifier) {
                     }
             ) {
                 if (canvasSize.width > 0 && canvasSize.height > 0) {
+                    val currentCanvasSizeState = rememberUpdatedState(canvasSize)
+
                     // 1. Mobile Game Screen Preview (Exact 2.17:1 Aspect Ratio)
                     val GAME_SCREEN_ASPECT_RATIO = 2.17f
+                    val currentGameScaleState = rememberUpdatedState(viewModel.gameScreenScalePercent.value)
+                    val currentGameXState = rememberUpdatedState(viewModel.gameScreenXPercent.value)
+                    val currentGameYState = rememberUpdatedState(viewModel.gameScreenYPercent.value)
+
                     val gameWidthPx = (viewModel.gameScreenScalePercent.value / 100f * canvasSize.width).roundToInt()
                     val gameHeightPx = (gameWidthPx / GAME_SCREEN_ASPECT_RATIO).roundToInt()
                     val gameOffsetXPx = ((viewModel.gameScreenXPercent.value / 100f) * canvasSize.width).roundToInt()
@@ -287,18 +358,71 @@ fun MainScreen(viewModel: StreamViewModel, modifier: Modifier = Modifier) {
                                 cornerRadius = 6.dp
                             )
                             .pointerInput("game_screen_drag") {
-                                detectTransformGestures { _, pan, zoom, _ ->
+                                awaitEachGesture {
+                                    val down = awaitFirstDown(requireUnconsumed = false)
                                     viewModel.selectElement("GAME_SCREEN")
-                                    val newX = ((gameOffsetXPx + pan.x) / canvasSize.width * 100f).coerceIn(0f, 100f)
-                                    val newY = ((gameOffsetYPx + pan.y) / canvasSize.height * 100f).coerceIn(0f, 100f)
-                                    val newScale = (viewModel.gameScreenScalePercent.value * zoom).coerceIn(20f, 100f)
-                                    viewModel.updateGameScreenPosition(newX, newY)
-                                    viewModel.updateGameScreenScale(newScale)
-                                }
-                            }
-                            .pointerInput("game_screen_tap") {
-                                detectTapGestures {
-                                    viewModel.selectElement("GAME_SCREEN")
+
+                                    val curCanvas = currentCanvasSizeState.value
+                                    val previewW = curCanvas.width.toFloat()
+                                    val previewH = curCanvas.height.toFloat()
+                                    if (previewW <= 0f || previewH <= 0f) return@awaitEachGesture
+
+                                    val gScale = currentGameScaleState.value
+                                    val gX = currentGameXState.value
+                                    val gY = currentGameYState.value
+
+                                    val gW = (gScale / 100f) * previewW
+                                    val gH = gW / GAME_SCREEN_ASPECT_RATIO
+
+                                    val maxXPx = (previewW - gW).coerceAtLeast(0f)
+                                    val maxYPx = (previewH - gH).coerceAtLeast(0f)
+
+                                    val initialLeftPx = ((gX / 100f) * previewW).coerceIn(0f, maxXPx)
+                                    val initialTopPx = ((gY / 100f) * previewH).coerceIn(0f, maxYPx)
+
+                                    val touchOffsetX = down.position.x
+                                    val touchOffsetY = down.position.y
+
+                                    val fingerStartX = initialLeftPx + touchOffsetX
+                                    val fingerStartY = initialTopPx + touchOffsetY
+
+                                    var isDragging = false
+                                    var totalPanX = 0f
+                                    var totalPanY = 0f
+                                    val touchSlop = viewConfiguration.touchSlop
+                                    val pointerId = down.id
+
+                                    while (true) {
+                                        val event = awaitPointerEvent()
+                                        val change = event.changes.firstOrNull { it.id == pointerId } ?: break
+                                        if (!change.pressed) break
+
+                                        val panDelta = change.positionChange()
+                                        totalPanX += panDelta.x
+                                        totalPanY += panDelta.y
+
+                                        if (!isDragging) {
+                                            val dist = Math.hypot(totalPanX.toDouble(), totalPanY.toDouble()).toFloat()
+                                            if (dist > touchSlop) {
+                                                isDragging = true
+                                                change.consume()
+                                            }
+                                        }
+
+                                        if (isDragging) {
+                                            change.consume()
+                                            val currentFingerX = fingerStartX + totalPanX
+                                            val currentFingerY = fingerStartY + totalPanY
+
+                                            val rawNewLeftPx = currentFingerX - touchOffsetX
+                                            val rawNewTopPx = currentFingerY - touchOffsetY
+
+                                            val clampedNewLeftPx = rawNewLeftPx.coerceIn(0f, maxXPx)
+                                            val clampedNewTopPx = rawNewTopPx.coerceIn(0f, maxYPx)
+
+                                            viewModel.updateGameScreenPosition((clampedNewLeftPx / previewW) * 100f, (clampedNewTopPx / previewH) * 100f)
+                                        }
+                                    }
                                 }
                             }
                     ) {
@@ -337,6 +461,8 @@ fun MainScreen(viewModel: StreamViewModel, modifier: Modifier = Modifier) {
 
                     // 2. Overlays Previews (Exact 16:9 Aspect Ratio with Dashed Border)
                     viewModel.overlays.forEachIndexed { index, overlay ->
+                        val currentOverlayState = rememberUpdatedState(overlay)
+
                         val overlayWidthPx = (overlay.scalePercent / 100f * canvasSize.width).roundToInt()
                         val overlayHeightPx = (overlayWidthPx * 9f / 16f).roundToInt()
 
@@ -356,7 +482,17 @@ fun MainScreen(viewModel: StreamViewModel, modifier: Modifier = Modifier) {
 
                         Box(
                             modifier = Modifier
-                                .offset { IntOffset(offsetXPx, offsetYPx) }
+                                .offset {
+                                    val curOverlay = currentOverlayState.value
+                                    val curCanvas = currentCanvasSizeState.value
+                                    val wPx = (curOverlay.scalePercent / 100f * curCanvas.width).roundToInt()
+                                    val hPx = (wPx * 9f / 16f).roundToInt()
+                                    val maxXPx = (curCanvas.width - wPx).coerceAtLeast(0)
+                                    val maxYPx = (curCanvas.height - hPx).coerceAtLeast(0)
+                                    val xPx = ((curOverlay.xPercent / 100f) * curCanvas.width).roundToInt().coerceIn(0, maxXPx)
+                                    val yPx = ((curOverlay.yPercent / 100f) * curCanvas.height).roundToInt().coerceIn(0, maxYPx)
+                                    IntOffset(xPx, yPx)
+                                }
                                 .size(width = overlayWidthDp, height = overlayHeightDp)
                                 .dashedBorder(
                                     width = if (isOverlaySelected) 2.5.dp else 1.5.dp,
@@ -364,23 +500,136 @@ fun MainScreen(viewModel: StreamViewModel, modifier: Modifier = Modifier) {
                                     cornerRadius = 6.dp
                                 )
                                 .pointerInput(overlay.id) {
-                                    detectTransformGestures { _, pan, zoom, _ ->
-                                        viewModel.selectElement(overlay.id)
-                                        val newXPercent = ((offsetXPx + pan.x) / canvasSize.width * 100f)
-                                            .coerceIn(0f, 100f)
-                                        val newYPercent = ((offsetYPx + pan.y) / canvasSize.height * 100f)
-                                            .coerceIn(0f, 100f)
-                                        val newScale = (overlay.scalePercent * zoom)
-                                            .coerceIn(5f, 100f)
-                                        viewModel.updateOverlayPosition(overlay.id, newXPercent, newYPercent)
-                                        viewModel.updateOverlayScale(overlay.id, newScale)
+                                    var lastTapTime = 0L
+                                    awaitEachGesture {
+                                        val down = awaitFirstDown(requireUnconsumed = false)
+                                        val downPos = down.position
+
+                                        val curOverlay = currentOverlayState.value
+                                        val curCanvas = currentCanvasSizeState.value
+                                        val previewW = curCanvas.width.toFloat()
+                                        val previewH = curCanvas.height.toFloat()
+
+                                        if (previewW <= 0f || previewH <= 0f) return@awaitEachGesture
+
+                                        val overlayWPx = (curOverlay.scalePercent / 100f) * previewW
+                                        val overlayHPx = overlayWPx * (9f / 16f)
+
+                                        val maxXPx = (previewW - overlayWPx).coerceAtLeast(0f)
+                                        val maxYPx = (previewH - overlayHPx).coerceAtLeast(0f)
+
+                                        val startOverlayLeftPx = ((curOverlay.xPercent / 100f) * previewW).coerceIn(0f, maxXPx)
+                                        val startOverlayTopPx = ((curOverlay.yPercent / 100f) * previewH).coerceIn(0f, maxYPx)
+
+                                        val grabOffsetX = downPos.x
+                                        val grabOffsetY = downPos.y
+
+                                        val initialFingerX = startOverlayLeftPx + grabOffsetX
+                                        val initialFingerY = startOverlayTopPx + grabOffsetY
+
+                                        val initialRect = com.example.bgmistreamer.overlayModelToCanvasRect(
+                                            curOverlay.xPercent,
+                                            curOverlay.yPercent,
+                                            curOverlay.scalePercent
+                                        )
+
+                                        Log.i(
+                                            "OVERLAY_PHASE29_START",
+                                            "overlayId=${curOverlay.id} pointerLocal=(${downPos.x},${downPos.y}) previewSize=($previewW,$previewH) overlayStart=($startOverlayLeftPx,$startOverlayTopPx) grabOffset=($grabOffsetX,$grabOffsetY) modelX=${curOverlay.xPercent} modelY=${curOverlay.yPercent} scale=${curOverlay.scalePercent}"
+                                        )
+
+                                        viewModel.selectElement(curOverlay.id)
+
+                                        var isDragging = false
+                                        var totalPanX = 0f
+                                        var totalPanY = 0f
+                                        val touchSlop = viewConfiguration.touchSlop
+                                        val pointerId = down.id
+
+                                        while (true) {
+                                            val event = awaitPointerEvent()
+                                            val change = event.changes.firstOrNull { it.id == pointerId } ?: break
+                                            if (!change.pressed) {
+                                                // Pointer up / released
+                                                val finalFingerX = initialFingerX + totalPanX
+                                                val finalFingerY = initialFingerY + totalPanY
+                                                if (isDragging) {
+                                                    val finalOverlay = currentOverlayState.value
+                                                    val finalLeftPx = (finalOverlay.xPercent / 100f) * previewW
+                                                    val finalTopPx = (finalOverlay.yPercent / 100f) * previewH
+                                                    val finalRect = com.example.bgmistreamer.overlayModelToCanvasRect(
+                                                        finalOverlay.xPercent,
+                                                        finalOverlay.yPercent,
+                                                        finalOverlay.scalePercent
+                                                    )
+
+                                                    Log.i(
+                                                        "OVERLAY_PHASE29_END",
+                                                        "overlayId=${finalOverlay.id} model=(${finalOverlay.xPercent},${finalOverlay.yPercent},${finalOverlay.scalePercent}) preview=($finalLeftPx,$finalTopPx) canvas=(${finalRect.x},${finalRect.y},${finalRect.width},${finalRect.height}) bottomGap=${finalRect.bottomGap}"
+                                                    )
+                                                } else {
+                                                    val now = change.uptimeMillis
+                                                    if (now - lastTapTime < 350L && (now - lastTapTime) > 40L) {
+                                                        viewModel.removeOverlay(curOverlay.id)
+                                                        lastTapTime = 0L
+                                                    } else {
+                                                        lastTapTime = now
+                                                        viewModel.selectElement(curOverlay.id)
+                                                    }
+                                                }
+                                                break
+                                            }
+
+                                            val panDelta = change.positionChange()
+                                            totalPanX += panDelta.x
+                                            totalPanY += panDelta.y
+
+                                            if (!isDragging) {
+                                                val dist = Math.hypot(totalPanX.toDouble(), totalPanY.toDouble()).toFloat()
+                                                if (dist > touchSlop) {
+                                                    isDragging = true
+                                                    change.consume()
+                                                }
+                                            }
+
+                                            if (isDragging) {
+                                                change.consume()
+                                                val fingerX = initialFingerX + totalPanX
+                                                val fingerY = initialFingerY + totalPanY
+
+                                                val rawNewLeftPx = startOverlayLeftPx + totalPanX
+                                                val rawNewTopPx = startOverlayTopPx + totalPanY
+
+                                                val clampedNewLeftPx = rawNewLeftPx.coerceIn(0f, maxXPx)
+                                                val clampedNewTopPx = rawNewTopPx.coerceIn(0f, maxYPx)
+
+                                                val newXPercent = (clampedNewLeftPx / previewW) * 100f
+                                                val newYPercent = (clampedNewTopPx / previewH) * 100f
+
+                                                viewModel.updateOverlayPosition(curOverlay.id, newXPercent, newYPercent)
+
+                                                // Calculate authoritative 1920x1080 canvas rect
+                                                val rect = com.example.bgmistreamer.overlayModelToCanvasRect(
+                                                    newXPercent,
+                                                    newYPercent,
+                                                    curOverlay.scalePercent
+                                                )
+
+                                                // Instantly update active live filter shader transform on GL thread
+                                                com.example.bgmistreamer.StreamService.activeImageOverlayFilterInstance?.updateTransform(
+                                                    rect.normX,
+                                                    rect.normY,
+                                                    rect.normWidth,
+                                                    rect.normHeight
+                                                )
+
+                                                Log.i(
+                                                    "OVERLAY_PHASE29_MOVE",
+                                                    "overlayId=${curOverlay.id} pointerLocal=(${downPos.x + totalPanX},${downPos.y + totalPanY}) totalPan=($totalPanX,$totalPanY) rawX=$rawNewLeftPx rawY=$rawNewTopPx clampedX=$clampedNewLeftPx clampedY=$clampedNewTopPx modelX=$newXPercent modelY=$newYPercent canvasX=${rect.x} canvasY=${rect.y} canvasWidth=${rect.width} canvasHeight=${rect.height} bottomGap=${rect.bottomGap}"
+                                                )
+                                            }
+                                        }
                                     }
-                                }
-                                .pointerInput(overlay.id + "_tap") {
-                                    detectTapGestures(
-                                        onTap = { viewModel.selectElement(overlay.id) },
-                                        onDoubleTap = { viewModel.removeOverlay(overlay.id) }
-                                    )
                                 }
                         ) {
                             AsyncImage(

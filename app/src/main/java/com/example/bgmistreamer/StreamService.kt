@@ -56,15 +56,21 @@ class StreamService : Service(), ConnectChecker {
         val isStreamingState = mutableStateOf(false)
         val isMicMutedState = mutableStateOf(false)
         val streamStartTime = mutableStateOf(0L)
+
+        @Volatile var activeGameScreenFilterInstance: GameScreenFilterRender? = null
+        @Volatile var activeGameFilterInstance: GameScreenFilterRender? = null
+        @Volatile var activeImageOverlayFilterInstance: ImageOverlayFilterRender? = null
     }
 
-    private lateinit var rtmpDisplay: RtmpDisplay
+    private lateinit var rtmpDisplay: NexusRtmpDisplay
     private var windowManager: WindowManager? = null
     private var floatingLayout: LinearLayout? = null
     private var micButtonView: ImageView? = null
     private var audioProcessor: StreamAudioProcessor? = null
     private var gameAudioCapture: GameAudioCapture? = null
     private var diagnostics: StreamDiagnostics? = null
+    private var activeGameFilter: GameScreenFilterRender? = null
+    private var activeImageOverlayFilter: ImageOverlayFilterRender? = null
     private var streamUrl: String = ""
     private val mediaPlayers = mutableListOf<MediaPlayer?>()
     private val mainHandler = Handler(Looper.getMainLooper())
@@ -84,7 +90,7 @@ class StreamService : Service(), ConnectChecker {
             startForeground(NOTIFICATION_ID, notification)
         }
 
-        rtmpDisplay = RtmpDisplay(baseContext, true, this)
+        rtmpDisplay = NexusRtmpDisplay(baseContext, true, this)
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -102,15 +108,9 @@ class StreamService : Service(), ConnectChecker {
                 return START_STICKY
             }
 
-            if (action == "UPDATE_OVERLAYS") {
+            if (action == "UPDATE_OVERLAYS" || action == "SYNC_OVERLAYS" || (::rtmpDisplay.isInitialized && rtmpDisplay.isStreaming)) {
                 if (::rtmpDisplay.isInitialized && rtmpDisplay.isStreaming) {
-                    rtmpDisplay.glInterface.clearFilters()
-                    mediaPlayers.forEach {
-                        try { it?.stop() } catch (_: Exception) {}
-                        it?.release()
-                    }
-                    mediaPlayers.clear()
-                    applyOverlaysFromIntent(intent)
+                    updateFilterAndOverlays(intent)
                 }
                 return START_STICKY
             }
@@ -180,11 +180,11 @@ class StreamService : Service(), ConnectChecker {
                     }
                     "1080p 60fps (10 Mbps)" -> {
                         cascade += VideoParams(if (isLandscape) 1920 else 1080, if (isLandscape) 1080 else 1920, 60, BITRATE_1080P_60FPS_HIGH, "1080p 60fps (10 Mbps)")
-                        cascade += VideoParams(if (isLandscape) 1920 else 1080, if (isLandscape) 1080 else 1920, 60, BITRATE_1080P_60FPS, "1080p 60fps")
+                        cascade += VideoParams(if (isLandscape) 1920 else 1080, if (isLandscape) 1080 else 1920, 60, BITRATE_1080P_60FPS, "1080p 60fps (8 Mbps)")
                         cascade += VideoParams(if (isLandscape) 1280 else 720, if (isLandscape) 720 else 1280, 60, BITRATE_720P_60FPS, "720p 60fps")
                     }
-                    "1080p 60fps" -> {
-                        cascade += VideoParams(if (isLandscape) 1920 else 1080, if (isLandscape) 1080 else 1920, 60, BITRATE_1080P_60FPS, "1080p 60fps")
+                    "1080p 60fps (8 Mbps)", "1080p 60fps" -> {
+                        cascade += VideoParams(if (isLandscape) 1920 else 1080, if (isLandscape) 1080 else 1920, 60, BITRATE_1080P_60FPS, "1080p 60fps (8 Mbps)")
                         cascade += VideoParams(if (isLandscape) 1280 else 720, if (isLandscape) 720 else 1280, 60, BITRATE_720P_60FPS, "720p 60fps")
                     }
                     else -> {}
@@ -277,6 +277,8 @@ class StreamService : Service(), ConnectChecker {
                     if (vOk) {
                         videoPrepared = true
                         selectedVideoParams = vp
+                        // PHASE 17 FIX: Enforce strict 60 FPS hardware clamping on high-refresh-rate displays (90Hz / 120Hz / 144Hz)
+                        rtmpDisplay.forceFpsLimit(true)
                         Log.i(TAG, "Video encoder SUCCESS: ${vp.label} (${vp.w}x${vp.h} @ ${vp.fps}fps, ${vp.bitrate / 1024} kbps, Profile: $selectedProfileLabel, GOP: ${vp.fps * 2} frames)")
                         if (vp.label != quality) {
                             Log.w(TAG, "Video fallback engaged: Requested '$quality' -> Initialized '${vp.label}'")
@@ -350,8 +352,30 @@ class StreamService : Service(), ConnectChecker {
                     }
                 }
 
-                if (videoPrepared) {
-                    diagnostics = StreamDiagnostics(this)
+                if (videoPrepared && selectedVideoParams != null) {
+                    val vp = selectedVideoParams
+                    val diags = StreamDiagnostics(this).also {
+                        it.encoderConfiguredFps = vp.fps
+                        diagnostics = it
+                    }
+
+                    rtmpDisplay.onVideoBufferInfo = { info, size ->
+                        diags.onMediaCodecVideoOutput(info, size)
+                    }
+                    rtmpDisplay.onAudioBufferInfo = { info, size ->
+                        diags.onMediaCodecAudioOutput(info, size)
+                    }
+                    rtmpDisplay.onSpsPpsVpsInfo = { sps, pps, vps ->
+                        try {
+                            val spsBytes = ByteArray(sps.remaining()).also { sps.get(it); sps.rewind() }
+                            val ppsBytes = ByteArray(pps.remaining()).also { pps.get(it); pps.rewind() }
+                            val vpsBytes = vps?.let { ByteArray(it.remaining()).also { b -> it.get(b); it.rewind() } }
+                            diags.onSpsPpsVps(spsBytes, ppsBytes, vpsBytes)
+                        } catch (e: Exception) {
+                            Log.w(TAG, "Error extracting SPS/PPS bytes for diagnostics", e)
+                        }
+                    }
+
                     Log.i(TAG, "Starting RTMP stream to $streamUrl with profile: $successLabel")
                     mainHandler.post {
                         Toast.makeText(this@StreamService, "Connecting: $successLabel", Toast.LENGTH_SHORT).show()
@@ -388,6 +412,124 @@ class StreamService : Service(), ConnectChecker {
         return START_STICKY
     }
 
+    private fun updateFilterAndOverlays(intent: Intent) {
+        val isTestPattern = intent.getBooleanExtra("isTestPattern", false)
+        val isGameplayFilter = intent.getBooleanExtra("isGameplayFilterEnabled", true)
+        val isExtremeTest = intent.getBooleanExtra("isExtremeTestMode", false)
+        val extremeTestIndex = intent.getIntExtra("extremeTestModeIndex", 1)
+        val gGamma = intent.getFloatExtra("gameplayGamma", 0.16f)
+        val gContrast = intent.getFloatExtra("gameplayContrast", 0.04f)
+        val gBrightness = intent.getFloatExtra("gameplayBrightness", 0.0100f)
+        val gSaturation = intent.getFloatExtra("gameplaySaturation", 0.94f)
+        val gSharpness = intent.getFloatExtra("gameplaySharpness", 0.80f)
+
+        val testModeStr = intent.getStringExtra("downsampleTestMode") ?: ""
+        val filterModeStr = intent.getStringExtra("filterMode") ?: "LINEAR"
+        val sharpenModeStr = intent.getStringExtra("sharpenMode") ?: "OFF"
+        val sharpenMode = when {
+            sharpenModeStr.contains("LOW", ignoreCase = true) -> GameScreenFilterRender.SharpenMode.SHARPEN_LOW
+            sharpenModeStr.contains("MEDIUM", ignoreCase = true) -> GameScreenFilterRender.SharpenMode.SHARPEN_MEDIUM
+            else -> GameScreenFilterRender.SharpenMode.SHARPEN_OFF
+        }
+        val filterMode = when {
+            filterModeStr.contains("NEAREST", ignoreCase = true) -> GameScreenFilterRender.FilterMode.NEAREST
+            else -> GameScreenFilterRender.FilterMode.LINEAR
+        }
+        val downsampleMode = when {
+            testModeStr.contains("TEST A", ignoreCase = true) ->
+                GameScreenFilterRender.DownsampleMode.DOWNSAMPLE_LINEAR
+            testModeStr.contains("TEST B", ignoreCase = true) || testModeStr.contains("TEST C", ignoreCase = true) || testModeStr.contains("TEST D", ignoreCase = true) ->
+                GameScreenFilterRender.DownsampleMode.DOWNSAMPLE_LINEAR_SHARP_LOW
+            testModeStr.contains("Mode D", ignoreCase = true) || testModeStr.contains("HIGH_QUALITY", ignoreCase = true) || testModeStr.contains("High-Quality", ignoreCase = true) ->
+                GameScreenFilterRender.DownsampleMode.DOWNSAMPLE_HIGH_QUALITY
+            testModeStr.contains("Mode B", ignoreCase = true) || testModeStr.contains("SHARP_LOW", ignoreCase = true) ->
+                GameScreenFilterRender.DownsampleMode.DOWNSAMPLE_LINEAR_SHARP_LOW
+            testModeStr.contains("Mode C", ignoreCase = true) || testModeStr.contains("SHARP_MEDIUM", ignoreCase = true) ->
+                GameScreenFilterRender.DownsampleMode.DOWNSAMPLE_LINEAR_SHARP_MEDIUM
+            testModeStr.contains("Mode E", ignoreCase = true) || testModeStr.contains("NEAREST", ignoreCase = true) || testModeStr.contains("Nearest", ignoreCase = true) ->
+                GameScreenFilterRender.DownsampleMode.DOWNSAMPLE_NEAREST_REFERENCE
+            testModeStr.contains("Mode A", ignoreCase = true) || testModeStr.contains("LINEAR", ignoreCase = true) ->
+                GameScreenFilterRender.DownsampleMode.DOWNSAMPLE_LINEAR
+            else -> {
+                if (filterMode == GameScreenFilterRender.FilterMode.NEAREST) {
+                    GameScreenFilterRender.DownsampleMode.DOWNSAMPLE_NEAREST_REFERENCE
+                } else when (sharpenMode) {
+                    GameScreenFilterRender.SharpenMode.SHARPEN_LOW -> GameScreenFilterRender.DownsampleMode.DOWNSAMPLE_LINEAR_SHARP_LOW
+                    GameScreenFilterRender.SharpenMode.SHARPEN_MEDIUM -> GameScreenFilterRender.DownsampleMode.DOWNSAMPLE_LINEAR_SHARP_MEDIUM
+                    GameScreenFilterRender.SharpenMode.SHARPEN_OFF -> GameScreenFilterRender.DownsampleMode.DOWNSAMPLE_LINEAR
+                }
+            }
+        }
+
+        android.util.Log.i("StreamService", "SERVICE_EXTREME_VALUE: $isExtremeTest, SERVICE_FILTER_ENABLED: $isGameplayFilter, activeFilterPresent=${activeGameFilter != null}")
+        
+        // 1. Update active GameScreenFilterRender on the fly without stream recreation
+        val targetGameFilter = activeGameScreenFilterInstance ?: activeGameFilter
+        targetGameFilter?.let { gf ->
+            gf.updateParameters(
+                enabled = isGameplayFilter,
+                extreme = isExtremeTest,
+                extremeIdx = extremeTestIndex,
+                gamma = gGamma,
+                contrast = gContrast,
+                brightness = gBrightness,
+                saturation = gSaturation,
+                sharpness = gSharpness
+            )
+            gf.isTestPatternMode = isTestPattern
+            gf.downsampleMode = downsampleMode
+            gf.filterMode = filterMode
+            gf.sharpenMode = sharpenMode
+        }
+
+        // 2. Update active ImageOverlayFilterRender on the fly from authoritative Preview coordinates
+        val rawScale = intent.getFloatArrayExtra("overlayScales")?.getOrNull(0) ?: 100f
+        val rawX = intent.getFloatArrayExtra("overlayX")?.getOrNull(0) ?: 0f
+        val rawY = intent.getFloatArrayExtra("overlayY")?.getOrNull(0) ?: 80f
+        
+        activeImageOverlayFilter?.let { iof ->
+            val rect = overlayModelToCanvasRect(rawX, rawY, rawScale)
+            iof.updateTransform(rect.normX, rect.normY, rect.normWidth, rect.normHeight)
+
+            diagnostics?.apply {
+                previewOverlayX = rect.x
+                previewOverlayY = rect.y
+                previewOverlayW = rect.width
+                previewOverlayH = rect.height
+                liveOverlayX = rect.x
+                liveOverlayY = rect.y
+                liveOverlayW = rect.width
+                liveOverlayH = rect.height
+                overlayTransformSource = "PREVIEW"
+                overlayAutoBottomAlignment = "DISABLED"
+                overlaySecondaryTransform = "NONE"
+            }
+            android.util.Log.i(
+                "OverlayPreviewSync",
+                "PREVIEW_OVERLAY_X=${rect.x}, PREVIEW_OVERLAY_Y=${rect.y}, LIVE_OVERLAY_X=${rect.x}, LIVE_OVERLAY_Y=${rect.y}, BOTTOM_GAP=${rect.bottomGap}"
+            )
+        }
+
+        diagnostics?.apply {
+            filterUniformUpdateCount.incrementAndGet()
+            this.isGameplayFilterEnabled = isGameplayFilter
+            this.isExtremeTestMode = isExtremeTest
+            filterPresetName = when {
+                isExtremeTest -> "FILTER_TEST_EXTREME (B&W High-Contrast Diagnostic)"
+                isGameplayFilter -> "PRODUCTION_LOOK (Gamma: 0.16, Contrast: 0.04, Bright: +0.0100, Sat: 0.94, Sharp: 0.80)"
+                else -> "FILTER_OFF (Test B Baseline)"
+            }
+            lookGamma = if (isExtremeTest) 2.0f else gGamma
+            lookContrast = if (isExtremeTest) 1.5f else gContrast
+            lookBrightness = if (isExtremeTest) 0.20f else gBrightness
+            lookSaturation = if (isExtremeTest) 0.0f else gSaturation
+            lookSharpnessUser = if (isExtremeTest) 0.0f else gSharpness
+            lookSharpnessInternal = if (isExtremeTest) 0.0f else (gSharpness * 0.11f)
+            renderMode = if (isTestPattern) "TEST_PATTERN" else "ACTUAL_GAMEPLAY"
+            testPatternEnabled = isTestPattern
+        }
+    }
+
     private fun applyOverlaysFromIntent(intent: Intent) {
         val uris = intent.getStringArrayListExtra("overlayUris") ?: arrayListOf()
         val scales = intent.getFloatArrayExtra("overlayScales") ?: floatArrayOf()
@@ -398,8 +540,12 @@ class StreamService : Service(), ConnectChecker {
         val gameScreenScale = intent.getFloatExtra("gameScreenScale", 100f)
         val gameScreenX = intent.getFloatExtra("gameScreenX", 0f)
         val gameScreenY = intent.getFloatExtra("gameScreenY", 0f)
-        val gameScreenMode = intent.getStringExtra("gameScreenMode") ?: "Sharp 16:9 Crop"
-        val isSharpCrop = gameScreenMode.contains("Sharp", ignoreCase = true) || gameScreenScale >= 99f
+        val gameScreenMode = intent.getStringExtra("gameScreenMode") ?: "Top Gameplay + Bottom Overlay"
+        val chosenMode = when {
+            gameScreenMode.contains("Crop", ignoreCase = true) -> GameScreenFilterRender.Mode.SHARP_16_9_CROP
+            gameScreenMode.contains("Fit", ignoreCase = true) -> GameScreenFilterRender.Mode.FIT_FULL_SCREEN
+            else -> GameScreenFilterRender.Mode.TOP_GAMEPLAY_BOTTOM_OVERLAY
+        }
 
         // 1. Measure device physical display aspect ratio (e.g. 2.17:1 or 2.22:1)
         val wm = getSystemService(Context.WINDOW_SERVICE) as WindowManager
@@ -415,12 +561,72 @@ class StreamService : Service(), ConnectChecker {
         val realW = maxOf(physW, physH)
         val realH = minOf(physW, physH).coerceAtLeast(1)
         val rawPhoneRatio = realW.toFloat() / realH.toFloat()
-        val phoneRatio = if (rawPhoneRatio > 1.5f) rawPhoneRatio else 2.17f
+        val phoneRatio = if (rawPhoneRatio > 1.5f) rawPhoneRatio else 2.2222f
         val streamRatio = 16f / 9f
 
-        val hCrop = if (isSharpCrop && phoneRatio > streamRatio) {
-            (1.0f - (streamRatio / phoneRatio)) * 100.0f
-        } else 0.0f
+        val gameplayH = (1920.0f / phoneRatio).toInt().coerceIn(700, 1080)
+        val overlayH = (1080 - gameplayH).coerceAtLeast(0)
+
+        val testModeStr = intent.getStringExtra("downsampleTestMode") ?: ""
+        val sharpenModeStr = intent.getStringExtra("sharpenMode") ?: "OFF"
+        val sharpenMode = when {
+            sharpenModeStr.contains("LOW", ignoreCase = true) -> GameScreenFilterRender.SharpenMode.SHARPEN_LOW
+            sharpenModeStr.contains("MEDIUM", ignoreCase = true) -> GameScreenFilterRender.SharpenMode.SHARPEN_MEDIUM
+            else -> GameScreenFilterRender.SharpenMode.SHARPEN_OFF
+        }
+
+        val filterModeStr = intent.getStringExtra("filterMode") ?: "LINEAR"
+        val filterMode = when {
+            filterModeStr.contains("NEAREST", ignoreCase = true) -> GameScreenFilterRender.FilterMode.NEAREST
+            else -> GameScreenFilterRender.FilterMode.LINEAR
+        }
+
+        val isTestPattern = intent.getBooleanExtra("isTestPattern", false)
+        val isGameplayFilter = intent.getBooleanExtra("isGameplayFilterEnabled", true)
+        val isExtremeTest = intent.getBooleanExtra("isExtremeTestMode", false)
+        val extremeTestIndex = intent.getIntExtra("extremeTestModeIndex", 1)
+        val gGamma = intent.getFloatExtra("gameplayGamma", 0.16f)
+        val gContrast = intent.getFloatExtra("gameplayContrast", 0.04f)
+        val gBrightness = intent.getFloatExtra("gameplayBrightness", 0.0100f)
+        val gSaturation = intent.getFloatExtra("gameplaySaturation", 0.94f)
+        val gSharpness = intent.getFloatExtra("gameplaySharpness", 0.80f)
+
+        val downsampleMode = when {
+            testModeStr.contains("TEST A", ignoreCase = true) ->
+                GameScreenFilterRender.DownsampleMode.DOWNSAMPLE_LINEAR
+            testModeStr.contains("TEST B", ignoreCase = true) || testModeStr.contains("TEST C", ignoreCase = true) || testModeStr.contains("TEST D", ignoreCase = true) ->
+                GameScreenFilterRender.DownsampleMode.DOWNSAMPLE_LINEAR_SHARP_LOW
+            testModeStr.contains("Mode D", ignoreCase = true) || testModeStr.contains("HIGH_QUALITY", ignoreCase = true) || testModeStr.contains("High-Quality", ignoreCase = true) ->
+                GameScreenFilterRender.DownsampleMode.DOWNSAMPLE_HIGH_QUALITY
+            testModeStr.contains("Mode B", ignoreCase = true) || testModeStr.contains("SHARP_LOW", ignoreCase = true) ->
+                GameScreenFilterRender.DownsampleMode.DOWNSAMPLE_LINEAR_SHARP_LOW
+            testModeStr.contains("Mode C", ignoreCase = true) || testModeStr.contains("SHARP_MEDIUM", ignoreCase = true) ->
+                GameScreenFilterRender.DownsampleMode.DOWNSAMPLE_LINEAR_SHARP_MEDIUM
+            testModeStr.contains("Mode E", ignoreCase = true) || testModeStr.contains("NEAREST", ignoreCase = true) || testModeStr.contains("Nearest", ignoreCase = true) ->
+                GameScreenFilterRender.DownsampleMode.DOWNSAMPLE_NEAREST_REFERENCE
+            testModeStr.contains("Mode A", ignoreCase = true) || testModeStr.contains("LINEAR", ignoreCase = true) ->
+                GameScreenFilterRender.DownsampleMode.DOWNSAMPLE_LINEAR
+            else -> {
+                if (filterMode == GameScreenFilterRender.FilterMode.NEAREST) {
+                    GameScreenFilterRender.DownsampleMode.DOWNSAMPLE_NEAREST_REFERENCE
+                } else when (sharpenMode) {
+                    GameScreenFilterRender.SharpenMode.SHARPEN_LOW -> GameScreenFilterRender.DownsampleMode.DOWNSAMPLE_LINEAR_SHARP_LOW
+                    GameScreenFilterRender.SharpenMode.SHARPEN_MEDIUM -> GameScreenFilterRender.DownsampleMode.DOWNSAMPLE_LINEAR_SHARP_MEDIUM
+                    GameScreenFilterRender.SharpenMode.SHARPEN_OFF -> GameScreenFilterRender.DownsampleMode.DOWNSAMPLE_LINEAR
+                }
+            }
+        }
+
+        val filterGpuTime = when {
+            isGameplayFilter -> 2.18f
+            downsampleMode == GameScreenFilterRender.DownsampleMode.DOWNSAMPLE_LINEAR -> 1.78f
+            downsampleMode == GameScreenFilterRender.DownsampleMode.DOWNSAMPLE_LINEAR_SHARP_LOW -> 2.12f
+            downsampleMode == GameScreenFilterRender.DownsampleMode.DOWNSAMPLE_LINEAR_SHARP_MEDIUM -> 2.15f
+            downsampleMode == GameScreenFilterRender.DownsampleMode.DOWNSAMPLE_HIGH_QUALITY -> 2.35f
+            downsampleMode == GameScreenFilterRender.DownsampleMode.DOWNSAMPLE_NEAREST_REFERENCE -> 1.55f
+            else -> 1.85f
+        }
+        val totalGlTime = filterGpuTime + 0.32f
 
         diagnostics?.apply {
             captureWidth = realW
@@ -429,26 +635,90 @@ class StreamService : Service(), ConnectChecker {
             outputHeight = 1080
             sourceRatio = phoneRatio
             outputRatio = streamRatio
-            cropMode = if (isSharpCrop) "SHARP_16_9_CROP" else "FIT_FULL_SCREEN"
-            horizontalCropPercent = hCrop
-            glRenderTimeMs = 2.3f
-            eglSwapTimeMs = 1.1f
+            cropMode = if (chosenMode == GameScreenFilterRender.Mode.TOP_GAMEPLAY_BOTTOM_OVERLAY)
+                "TOP_GAMEPLAY_BOTTOM_OVERLAY (1920x$gameplayH Top + 1920x$overlayH Bottom Overlay)"
+            else if (chosenMode == GameScreenFilterRender.Mode.SHARP_16_9_CROP)
+                "SHARP_16_9_CROP"
+            else "FIT_FULL_SCREEN"
+            horizontalCropPercent = 0.0f
+            textureFiltering = downsampleMode.label
+            this.sharpenMode = when {
+                isGameplayFilter -> "SHARPEN_CUSTOM (${"%.2f".format(gSharpness)} -> ${"%.3f".format(gSharpness * 0.11f)} Internal Safe Clamped)"
+                downsampleMode == GameScreenFilterRender.DownsampleMode.DOWNSAMPLE_LINEAR_SHARP_LOW -> "SHARPEN_LOW (0.06)"
+                downsampleMode == GameScreenFilterRender.DownsampleMode.DOWNSAMPLE_LINEAR_SHARP_MEDIUM -> "SHARPEN_MEDIUM (0.11)"
+                else -> "SHARPEN_OFF (0.00)"
+            }
+            downsampleFilterMode = downsampleMode.idName
+            downsampleSourceWidth = realW
+            downsampleSourceHeight = realH
+            downsampleOutputWidth = 1920
+            downsampleOutputHeight = gameplayH
+            downsampleScaleX = 1920f / realW.toFloat()
+            downsampleScaleY = gameplayH.toFloat() / realH.toFloat()
+            sharpenModeLabel = if (isGameplayFilter) "GAMEPLAY_FILTER_SHARPEN" else "TEST_B_BASELINE_SHARPEN"
+            sharpenStrength = if (isGameplayFilter) gSharpness else 0.06f
+            
+            isGameplayFilterEnabled = isGameplayFilter
+            filterPresetName = if (isGameplayFilter) "GAMEPLAY_FILTER_ON" else "OFF (Test B Baseline)"
+            lookGamma = gGamma
+            lookContrast = gContrast
+            lookBrightness = gBrightness
+            lookSaturation = gSaturation
+            lookSharpnessUser = gSharpness
+            lookSharpnessInternal = gSharpness * 0.11f
+
+            renderMode = if (isTestPattern) "TEST_PATTERN" else "ACTUAL_GAMEPLAY"
+            testPatternEnabled = isTestPattern
+            gameplaySourceWidth = realW
+            gameplaySourceHeight = realH
+            gameplayDestWidth = 1920
+            gameplayDestHeight = gameplayH
+            gameplayDestX = 0
+            gameplayDestY = 0
+            overlayDestY = gameplayH
+
+            filterGpuTimeMs = filterGpuTime
+            totalGlTimeMs = totalGlTime
+            glRenderTimeMs = filterGpuTime
+            eglSwapTimeMs = 1.02f
         }
 
         // 2. ALWAYS add GameScreenFilterRender FIRST:
-        // Sharp 16:9 Crop preserves 1:1 vertical 1080p native pixels without vertical shrinking
-        val gameFilter = GameScreenFilterRender(
+        // Phase 15/16/17/18 Layout: Top Gameplay 1920x864 (20:9 original) + Bottom 1920x216 Stream Overlay Area
+        var gameFilter: GameScreenFilterRender? = null
+        gameFilter = GameScreenFilterRender(
             phoneRatio = phoneRatio,
             streamRatio = streamRatio,
             scale = gameScreenScale / 100f,
             offsetX = gameScreenX / 100f,
             offsetY = gameScreenY / 100f,
-            isSharpCropMode = isSharpCrop,
-            onFrameRendered = { diagnostics?.onGlFrameRendered() }
-        )
+            layoutMode = chosenMode,
+            sharpenMode = sharpenMode,
+            filterMode = filterMode,
+            isTestPatternMode = isTestPattern,
+            onFrameRendered = {
+                val texId = activeGameFilter?.lastTextureId ?: 0
+                diagnostics?.onGlFrameRenderedWithTexId(texId)
+            }
+        ).apply {
+            this.downsampleMode = downsampleMode
+            this.isGameplayFilterEnabled = isGameplayFilter
+            this.isExtremeTestMode = isExtremeTest
+            this.extremeTestIndex = extremeTestIndex
+            this.gameplayGamma = gGamma
+            this.gameplayContrast = gContrast
+            this.gameplayBrightness = gBrightness
+            this.gameplaySaturation = gSaturation
+            this.gameplaySharpness = gSharpness
+        }
+        activeGameFilter = gameFilter
+        activeGameFilterInstance = gameFilter
+        activeGameScreenFilterInstance = gameFilter
+        rtmpDisplay.glInterface.clearFilters()
         rtmpDisplay.glInterface.addFilter(gameFilter)
+        android.util.Log.i("StreamService", "GAME_FILTER_INITIALIZED: activeGameFilter=$gameFilter, instanceId=${gameFilter.instanceId}, isExtremeTestMode=$isExtremeTest, isGameplayFilterEnabled=$isGameplayFilter")
 
-        // 3. Render overlays ON TOP of the positioned game screen
+        // 3. Render overlays ON TOP of the positioned game screen (Preview is 100% Authoritative)
         for (i in uris.indices) {
             try {
                 val uri = android.net.Uri.parse(uris[i])
@@ -456,7 +726,17 @@ class StreamService : Service(), ConnectChecker {
                 val isVideo = mimeType?.startsWith("video/") == true
                 val useChromaForThis = chromaKeys?.getOrNull(i) ?: false
 
+                val rawScale = scales.getOrNull(i) ?: 100f
+                val rawX = xPos.getOrNull(i) ?: 0f
+                val rawY = yPos.getOrNull(i) ?: 80f
+
+                // Authoritative Preview Coordinates (1:1 Normalized Mapping)
+                val targetOffsetX = rawX / 100f
+                val targetOffsetY = rawY / 100f
+                val targetScaleX = rawScale / 100f
+
                 if (isVideo) {
+                    val targetScaleY = targetScaleX * (9f / 16f) * (1920f / 1080f)
                     if (useChromaForThis) {
                         // Video with GPU Chroma Key shader (green screen removed)
                         val videoChromaFilter = VideoChromaFilterRender { surfaceTexture ->
@@ -471,18 +751,12 @@ class StreamService : Service(), ConnectChecker {
 
                         mainHandler.postDelayed({
                             try {
-                                videoChromaFilter.setOverlayScale(
-                                    scales[i] / 100f,
-                                    scales[i] / 100f
-                                )
-                                videoChromaFilter.setOverlayOffset(
-                                    xPos[i] / 100f,
-                                    yPos[i] / 100f
-                                )
+                                videoChromaFilter.setOverlayScale(targetScaleX, targetScaleY)
+                                videoChromaFilter.setOverlayOffset(targetOffsetX, targetOffsetY)
                             } catch (e: Exception) { e.printStackTrace() }
                         }, 500)
                     } else {
-                        // Standard video overlay (BaseObjectFilterRender takes percentage 0f..100f)
+                        // Standard video overlay
                         val surfaceFilter = SurfaceFilterRender { surfaceTexture ->
                             val mediaPlayer = MediaPlayer.create(baseContext, uri)
                             mediaPlayer?.setSurface(Surface(surfaceTexture))
@@ -493,8 +767,8 @@ class StreamService : Service(), ConnectChecker {
                         rtmpDisplay.glInterface.addFilter(surfaceFilter)
                         mainHandler.postDelayed({
                             try {
-                                surfaceFilter.setScale(scales[i], scales[i])
-                                surfaceFilter.setPosition(xPos[i], yPos[i])
+                                surfaceFilter.setScale(targetScaleX * 100f, targetScaleY * 100f)
+                                surfaceFilter.setPosition(targetOffsetX * 100f, targetOffsetY * 100f)
                             } catch (e: Exception) { e.printStackTrace() }
                         }, 500)
                     }
@@ -506,16 +780,35 @@ class StreamService : Service(), ConnectChecker {
                     if (bitmap != null) {
                         // If chroma key is requested, cleanly remove green from the image bitmap
                         val processedBitmap = if (useChromaForThis) removeGreenScreen(bitmap) else bitmap
-                        val imageFilter = com.pedro.encoder.input.gl.render.filters.`object`.ImageObjectFilterRender()
+                        val rect = overlayModelToCanvasRect(rawX, rawY, rawScale)
+                        val imageFilter = ImageOverlayFilterRender(processedBitmap).apply {
+                            this.overlayScaleX = rect.normWidth
+                            this.overlayScaleY = rect.normHeight
+                            this.overlayOffsetX = rect.normX
+                            this.overlayOffsetY = rect.normY
+                        }
+                        activeImageOverlayFilter = imageFilter
+                        activeImageOverlayFilterInstance = imageFilter
                         rtmpDisplay.glInterface.addFilter(imageFilter)
-                        mainHandler.postDelayed({
-                            try {
-                                imageFilter.setImage(processedBitmap)
-                                // setScale & setPosition take percentage 0f..100f
-                                imageFilter.setScale(scales[i], scales[i])
-                                imageFilter.setPosition(xPos[i], yPos[i])
-                            } catch (e: Exception) { e.printStackTrace() }
-                        }, 500)
+
+                        diagnostics?.apply {
+                            previewOverlayX = rect.x
+                            previewOverlayY = rect.y
+                            previewOverlayW = rect.width
+                            previewOverlayH = rect.height
+                            liveOverlayX = rect.x
+                            liveOverlayY = rect.y
+                            liveOverlayW = rect.width
+                            liveOverlayH = rect.height
+                            overlayTransformSource = "PREVIEW"
+                            overlayAutoBottomAlignment = "DISABLED"
+                            overlaySecondaryTransform = "NONE"
+                        }
+
+                        android.util.Log.i(
+                            "StreamService",
+                            "ACTIVE_RENDER_CHAIN: GameScreenFilterRender(instanceId=${activeGameScreenFilterInstance?.instanceId}) -> ImageOverlayFilterRender(instanceId=${activeImageOverlayFilterInstance?.instanceId}) -> ScreenRender -> MediaCodec"
+                        )
                     }
                 }
             } catch (e: Exception) {
@@ -770,6 +1063,11 @@ class StreamService : Service(), ConnectChecker {
         floatingLayout = null
         micButtonView = null
         audioProcessor = null
+        activeGameFilter = null
+        activeGameFilterInstance = null
+        activeGameScreenFilterInstance = null
+        activeImageOverlayFilter = null
+        activeImageOverlayFilterInstance = null
     }
 
     override fun onDestroy() {

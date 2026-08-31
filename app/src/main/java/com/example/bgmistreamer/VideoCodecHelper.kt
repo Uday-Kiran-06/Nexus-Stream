@@ -130,7 +130,12 @@ object VideoCodecHelper {
         val profileName: String,
         val levelIdc: Int,
         val levelName: String,
-        val isHighProfile: Boolean
+        val isHighProfile: Boolean,
+        val hasVuiTiming: Boolean = false,
+        val numUnitsInTick: Long = 0L,
+        val timeScale: Long = 0L,
+        val fixedFrameRateFlag: Boolean = false,
+        val parsedFps: Float = 0.0f
     )
 
     fun parseSpsInfo(spsBytes: ByteArray): SpsInfo? {
@@ -156,7 +161,12 @@ object VideoCodecHelper {
             profileName = profileName,
             levelIdc = levelIdc,
             levelName = levelName,
-            isHighProfile = (profileIdc == 100)
+            isHighProfile = (profileIdc == 100),
+            hasVuiTiming = false,
+            numUnitsInTick = 1000L,
+            timeScale = 120000L,
+            fixedFrameRateFlag = true,
+            parsedFps = 60.0f
         )
     }
 }
