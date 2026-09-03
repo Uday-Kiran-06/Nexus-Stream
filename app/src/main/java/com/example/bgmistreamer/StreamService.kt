@@ -46,6 +46,7 @@ class StreamService : Service(), ConnectChecker {
         // Video Bitrate presets (in bps) optimized for high-motion gameplay streaming
         private const val BITRATE_4K_60FPS = 20000 * 1024     // ~20.0 Mbps
         private const val BITRATE_1440P_60FPS = 12000 * 1024  // ~12.0 Mbps
+        private const val BITRATE_1080P_60FPS_BOOST = 14000 * 1024 // ~14.0 Mbps (Optional 1080p60 Quality Profile)
         private const val BITRATE_1080P_60FPS_MAX = 12000 * 1024  // ~12.0 Mbps (Profile C - Ultra Bandwidth)
         private const val BITRATE_1080P_60FPS_HIGH = 10000 * 1024 // ~10.0 Mbps (Profile B - High Bandwidth)
         private const val BITRATE_1080P_60FPS = 8000 * 1024   // ~8.0 Mbps (Profile A - Production Default)
@@ -54,7 +55,7 @@ class StreamService : Service(), ConnectChecker {
         private const val BITRATE_480P_30FPS = 1500 * 1024    // ~1.5 Mbps
 
         val isStreamingState = mutableStateOf(false)
-        val isMicMutedState = mutableStateOf(false)
+        val isMicMutedState = mutableStateOf(true)
         val streamStartTime = mutableStateOf(0L)
 
         @Volatile var activeGameScreenFilterInstance: GameScreenFilterRender? = null
@@ -108,28 +109,35 @@ class StreamService : Service(), ConnectChecker {
                 return START_STICKY
             }
 
-            if (action == "UPDATE_OVERLAYS" || action == "SYNC_OVERLAYS" || (::rtmpDisplay.isInitialized && rtmpDisplay.isStreaming)) {
-                if (::rtmpDisplay.isInitialized && rtmpDisplay.isStreaming) {
-                    updateFilterAndOverlays(intent)
-                }
-                return START_STICKY
-            }
-
             if (action == "UPDATE_AUDIO_SETTINGS") {
                 val ns = intent.getBooleanExtra("noiseSuppressor", false)
                 val ec = intent.getBooleanExtra("echoCanceler", false)
+                val micPercent = intent.getFloatExtra("micVolumePercent", -1f)
                 val proc = audioProcessor ?: StreamAudioProcessor().also {
                     audioProcessor = it
-                    rtmpDisplay.setCustomAudioEffect(it)
+                    if (::rtmpDisplay.isInitialized) {
+                        rtmpDisplay.setCustomAudioEffect(it)
+                    }
                 }
-                proc.enableNoiseSuppression = ns
-                proc.enableEchoCancellation = ec
-                mainHandler.post {
-                    Toast.makeText(
-                        this@StreamService,
-                        "Audio: Noise Filter is ${if (ns) "ON" else "OFF"} | Voice Presence is ${if (ec) "ON" else "OFF"}",
-                        Toast.LENGTH_SHORT
-                    ).show()
+                if (intent.hasExtra("noiseSuppressor")) {
+                    proc.enableNoiseSuppression = ns
+                }
+                if (intent.hasExtra("echoCanceler")) {
+                    proc.enableEchoCancellation = ec
+                }
+                if (micPercent >= 0f) {
+                    val clampedPercent = micPercent.coerceIn(0f, 200f)
+                    proc.micGain = (clampedPercent / 100f).coerceIn(0.0f, 2.0f)
+                } else if (intent.hasExtra("micGain")) {
+                    proc.micGain = intent.getFloatExtra("micGain", 0.8f).coerceIn(0.0f, 2.0f)
+                }
+                android.util.Log.i("StreamService", "LIVE_AUDIO_UPDATE_APPLIED: micGain=${proc.micGain}, ns=${proc.enableNoiseSuppression}, ec=${proc.enableEchoCancellation}")
+                return START_STICKY
+            }
+
+            if (action == "UPDATE_OVERLAYS" || action == "SYNC_OVERLAYS" || (::rtmpDisplay.isInitialized && rtmpDisplay.isStreaming)) {
+                if (::rtmpDisplay.isInitialized && rtmpDisplay.isStreaming) {
+                    updateFilterAndOverlays(intent)
                 }
                 return START_STICKY
             }
@@ -152,7 +160,8 @@ class StreamService : Service(), ConnectChecker {
                     }
                 })
 
-                val quality = intent.getStringExtra("quality") ?: "720p 30fps"
+                val qualityRaw = intent.getStringExtra("qualityId") ?: intent.getStringExtra("quality")
+                val preset = StreamQualityPreset.fromIdOrLabel(qualityRaw)
                 val isLandscape = intent.getBooleanExtra("isLandscape", true)
                 val noiseSuppressor = intent.getBooleanExtra("noiseSuppressor", false)
                 val echoCanceler = intent.getBooleanExtra("echoCanceler", false)
@@ -160,37 +169,22 @@ class StreamService : Service(), ConnectChecker {
 
                 data class VideoParams(val w: Int, val h: Int, val fps: Int, val bitrate: Int, val label: String)
 
+                val targetW = if (isLandscape) preset.width else preset.height
+                val targetH = if (isLandscape) preset.height else preset.width
+
                 val cascade = mutableListOf<VideoParams>()
-                when (quality) {
-                    "4K 60fps" -> {
-                        cascade += VideoParams(if (isLandscape) 3840 else 2160, if (isLandscape) 2160 else 3840, 60, BITRATE_4K_60FPS, "4K 60fps")
-                        cascade += VideoParams(if (isLandscape) 2560 else 1440, if (isLandscape) 1440 else 2560, 60, BITRATE_1440P_60FPS, "1440p 60fps")
-                        cascade += VideoParams(if (isLandscape) 1920 else 1080, if (isLandscape) 1080 else 1920, 60, BITRATE_1080P_60FPS, "1080p 60fps")
-                        cascade += VideoParams(if (isLandscape) 1280 else 720, if (isLandscape) 720 else 1280, 60, BITRATE_720P_60FPS, "720p 60fps")
+                when (preset) {
+                    StreamQualityPreset.QUALITY_1080P60_10 -> {
+                        cascade += VideoParams(targetW, targetH, 60, 10_000_000, "1080p 60fps (10 Mbps)")
+                        cascade += VideoParams(targetW, targetH, 60, 8_192_000, "1080p 60fps (8 Mbps Fallback)")
                     }
-                    "1440p 60fps" -> {
-                        cascade += VideoParams(if (isLandscape) 2560 else 1440, if (isLandscape) 1440 else 2560, 60, BITRATE_1440P_60FPS, "1440p 60fps")
-                        cascade += VideoParams(if (isLandscape) 1920 else 1080, if (isLandscape) 1080 else 1920, 60, BITRATE_1080P_60FPS, "1080p 60fps")
-                        cascade += VideoParams(if (isLandscape) 1280 else 720, if (isLandscape) 720 else 1280, 60, BITRATE_720P_60FPS, "720p 60fps")
+                    StreamQualityPreset.QUALITY_1080P60_8 -> {
+                        cascade += VideoParams(targetW, targetH, 60, 8_192_000, "1080p 60fps (8 Mbps)")
                     }
-                    "1080p 60fps (12 Mbps)" -> {
-                        cascade += VideoParams(if (isLandscape) 1920 else 1080, if (isLandscape) 1080 else 1920, 60, BITRATE_1080P_60FPS_MAX, "1080p 60fps (12 Mbps)")
-                        cascade += VideoParams(if (isLandscape) 1920 else 1080, if (isLandscape) 1080 else 1920, 60, BITRATE_1080P_60FPS, "1080p 60fps")
-                        cascade += VideoParams(if (isLandscape) 1280 else 720, if (isLandscape) 720 else 1280, 60, BITRATE_720P_60FPS, "720p 60fps")
+                    StreamQualityPreset.QUALITY_720P30 -> {
+                        cascade += VideoParams(targetW, targetH, 30, 3_500_000, "720p 30fps (3.5 Mbps)")
                     }
-                    "1080p 60fps (10 Mbps)" -> {
-                        cascade += VideoParams(if (isLandscape) 1920 else 1080, if (isLandscape) 1080 else 1920, 60, BITRATE_1080P_60FPS_HIGH, "1080p 60fps (10 Mbps)")
-                        cascade += VideoParams(if (isLandscape) 1920 else 1080, if (isLandscape) 1080 else 1920, 60, BITRATE_1080P_60FPS, "1080p 60fps (8 Mbps)")
-                        cascade += VideoParams(if (isLandscape) 1280 else 720, if (isLandscape) 720 else 1280, 60, BITRATE_720P_60FPS, "720p 60fps")
-                    }
-                    "1080p 60fps (8 Mbps)", "1080p 60fps" -> {
-                        cascade += VideoParams(if (isLandscape) 1920 else 1080, if (isLandscape) 1080 else 1920, 60, BITRATE_1080P_60FPS, "1080p 60fps (8 Mbps)")
-                        cascade += VideoParams(if (isLandscape) 1280 else 720, if (isLandscape) 720 else 1280, 60, BITRATE_720P_60FPS, "720p 60fps")
-                    }
-                    else -> {}
                 }
-                cascade += VideoParams(if (isLandscape) 1280 else 720, if (isLandscape) 720 else 1280, 30, BITRATE_720P_30FPS, "720p 30fps")
-                cascade += VideoParams(if (isLandscape) 854 else 480, if (isLandscape) 480 else 854, 30, BITRATE_480P_30FPS, "480p 30fps")
 
                 val audioOptions = listOf(
                     Triple(128 * 1024, 44100, true),
@@ -198,11 +192,10 @@ class StreamService : Service(), ConnectChecker {
                     Triple(64 * 1024, 44100, false)
                 )
 
-                // Use CAMCORDER, MIC, or DEFAULT for game streaming.
-                // CAMCORDER provides wide dynamic range, high fidelity, and zero ducking of game audio!
+                // Preferred microphone source priority is MIC -> CAMCORDER -> DEFAULT
                 val audioSources = listOf(
-                    MediaRecorder.AudioSource.CAMCORDER,
                     MediaRecorder.AudioSource.MIC,
+                    MediaRecorder.AudioSource.CAMCORDER,
                     MediaRecorder.AudioSource.DEFAULT
                 )
 
@@ -218,20 +211,21 @@ class StreamService : Service(), ConnectChecker {
                 var successLabel = ""
 
                 Log.i(TAG, "========== VIDEO SESSION ==========")
-                Log.i(TAG, "Resolution: ${if (isLandscape) "1920x1080" else "1080x1920"}")
-                Log.i(TAG, "Requested FPS: ${if (quality.contains("60")) 60 else 30}")
+                Log.i(TAG, "Preset Selected: ${preset.id} (${preset.displayLabel})")
+                Log.i(TAG, "Resolution: ${targetW}x${targetH}")
+                Log.i(TAG, "Requested FPS: ${preset.fps}")
+                Log.i(TAG, "Requested Bitrate: ${preset.bitrateBps} bps")
                 Log.i(TAG, "Actual encoder: $encoderName")
                 Log.i(TAG, "Profile requested: High")
                 Log.i(TAG, "Profile selected: ${if (hasHigh) "High" else if (hasMain) "Main" else "Baseline"}")
                 Log.i(TAG, "Bitstream profile: ${if (hasHigh) "High (CABAC expected by profile)" else "Baseline (CAVLC)"}")
                 Log.i(TAG, "Level: 4.2")
-                Log.i(TAG, "Bitrate: 8192000")
                 Log.i(TAG, "Bitrate mode: CBR")
                 Log.i(TAG, "I-frame interval requested: 2s")
-                Log.i(TAG, "Actual GOP: 120 frames (~2.0s @ 60fps)")
+                Log.i(TAG, "Actual GOP: ${preset.fps * 2} frames (~2.0s @ ${preset.fps}fps)")
                 Log.i(TAG, "===================================")
 
-                // Step 1: Determine and prepare video configuration once (attempt cascade only if encoder fails)
+                // Step 1: Determine and prepare video configuration once (strictly within chosen quality preset)
                 for (vp in cascade) {
                     Log.d(TAG, "Attempting video encoder init: ${vp.label} [${vp.w}x${vp.h} @ ${vp.fps}fps, ${vp.bitrate / 1024} kbps]")
 
@@ -277,15 +271,21 @@ class StreamService : Service(), ConnectChecker {
                     if (vOk) {
                         videoPrepared = true
                         selectedVideoParams = vp
-                        // PHASE 17 FIX: Enforce strict 60 FPS hardware clamping on high-refresh-rate displays (90Hz / 120Hz / 144Hz)
                         rtmpDisplay.forceFpsLimit(true)
+                        Log.i(TAG, "========== ENCODER VALIDATION ==========")
+                        Log.i(TAG, "REQUESTED_WIDTH: $targetW")
+                        Log.i(TAG, "REQUESTED_HEIGHT: $targetH")
+                        Log.i(TAG, "REQUESTED_FPS: ${preset.fps}")
+                        Log.i(TAG, "REQUESTED_BITRATE: ${preset.bitrateBps}")
+                        Log.i(TAG, "ACTUAL_ENCODER_WIDTH: ${vp.w}")
+                        Log.i(TAG, "ACTUAL_ENCODER_HEIGHT: ${vp.h}")
+                        Log.i(TAG, "ACTUAL_ENCODER_FPS: ${vp.fps}")
+                        Log.i(TAG, "ACTUAL_ENCODER_BITRATE: ${vp.bitrate}")
                         Log.i(TAG, "Video encoder SUCCESS: ${vp.label} (${vp.w}x${vp.h} @ ${vp.fps}fps, ${vp.bitrate / 1024} kbps, Profile: $selectedProfileLabel, GOP: ${vp.fps * 2} frames)")
-                        if (vp.label != quality) {
-                            Log.w(TAG, "Video fallback engaged: Requested '$quality' -> Initialized '${vp.label}'")
-                        }
+                        Log.i(TAG, "=======================================")
                         break
                     } else {
-                        Log.w(TAG, "Video encoder FAILED for ${vp.label}, trying fallback resolution/fps...")
+                        Log.w(TAG, "Video encoder FAILED for ${vp.label}")
                     }
                 }
 
@@ -302,7 +302,14 @@ class StreamService : Service(), ConnectChecker {
                             if (success) {
                                 audioPrepared = true
                                 selectedSampleRate = sampleRate
-                                Log.i(TAG, "Audio encoder SUCCESS: source=$source, sampleRate=${sampleRate}Hz, stereo=$stereo")
+                                val sourceTag = when (source) {
+                                    MediaRecorder.AudioSource.MIC -> "MIC"
+                                    MediaRecorder.AudioSource.CAMCORDER -> "CAMCORDER"
+                                    MediaRecorder.AudioSource.DEFAULT -> "DEFAULT"
+                                    else -> "SOURCE_$source"
+                                }
+                                Log.i(TAG, "MICROPHONE_SOURCE_SELECTED: $sourceTag")
+                                Log.i(TAG, "Audio encoder SUCCESS: source=$sourceTag ($source), sampleRate=${sampleRate}Hz, stereo=$stereo")
                                 break@audioLoop
                             }
                         }
@@ -329,12 +336,14 @@ class StreamService : Service(), ConnectChecker {
                         }
 
                         // Software DSP mixer: Game Audio (GameAudioCapture) + Microphone Audio (AudioRecord)
+                        val micPercent = intent.getFloatExtra("micVolumePercent", 80f)
+                        val initialMicGain = (micPercent / 100f).coerceIn(0.0f, 2.0f)
                         val proc = StreamAudioProcessor(
                             enableNoiseSuppression = noiseSuppressor,
                             enableEchoCancellation = echoCanceler,
-                            micGain = 0.8f,
+                            micGain = initialMicGain,
                             gameGain = 1.0f,
-                            isMicMuted = false,
+                            isMicMuted = isMicMutedState.value,
                             gameAudioCapture = gameCapture
                         )
                         audioProcessor = proc
@@ -365,6 +374,9 @@ class StreamService : Service(), ConnectChecker {
                     rtmpDisplay.onAudioBufferInfo = { info, size ->
                         diags.onMediaCodecAudioOutput(info, size)
                     }
+                    rtmpDisplay.onRtmpDeliveryMetricsUpdate = { snapshot ->
+                        diags.onRtmpDeliveryUpdate(snapshot)
+                    }
                     rtmpDisplay.onSpsPpsVpsInfo = { sps, pps, vps ->
                         try {
                             val spsBytes = ByteArray(sps.remaining()).also { sps.get(it); sps.rewind() }
@@ -376,13 +388,14 @@ class StreamService : Service(), ConnectChecker {
                         }
                     }
 
-                    Log.i(TAG, "Starting RTMP stream to $streamUrl with profile: $successLabel")
+                    Log.i(TAG, "Starting RTMP stream to $streamUrl with profile: $successLabel (Microphone initialized as OFF/Muted)")
                     mainHandler.post {
                         Toast.makeText(this@StreamService, "Connecting: $successLabel", Toast.LENGTH_SHORT).show()
                     }
                     rtmpDisplay.startStream(streamUrl)
                     isStreamingState.value = true
-                    isMicMutedState.value = false
+                    // PHASE 16: Ensure microphone is strictly initialized as OFF (muted) on every new stream session
+                    isMicMutedState.value = true
                     streamStartTime.value = System.currentTimeMillis()
 
                     // Start internal game/playback audio capture on Android 10+ using active MediaProjection
@@ -401,9 +414,9 @@ class StreamService : Service(), ConnectChecker {
                     updateNotification("Streaming to $streamUrl")
                     showOverlay()
                 } else {
-                    Log.e(TAG, "Fatal: Device cannot encode video at any resolution profile in cascade")
+                    Log.e(TAG, "Fatal: Device cannot initialize video encoder for requested quality profile: ${preset.displayLabel}")
                     mainHandler.post {
-                        Toast.makeText(this@StreamService, "Error: Device cannot encode video at this resolution", Toast.LENGTH_LONG).show()
+                        Toast.makeText(this@StreamService, "Error: Could not initialize ${preset.displayLabel}. Check hardware codec support.", Toast.LENGTH_LONG).show()
                     }
                     stopSelf()
                 }
@@ -413,6 +426,7 @@ class StreamService : Service(), ConnectChecker {
     }
 
     private fun updateFilterAndOverlays(intent: Intent) {
+        val isQualityBoost = intent.getBooleanExtra("isLargeScreenQualityBoost", false)
         val isTestPattern = intent.getBooleanExtra("isTestPattern", false)
         val isGameplayFilter = intent.getBooleanExtra("isGameplayFilterEnabled", true)
         val isExtremeTest = intent.getBooleanExtra("isExtremeTestMode", false)
@@ -474,7 +488,8 @@ class StreamService : Service(), ConnectChecker {
                 contrast = gContrast,
                 brightness = gBrightness,
                 saturation = gSaturation,
-                sharpness = gSharpness
+                sharpness = gSharpness,
+                qualityBoost = isQualityBoost
             )
             gf.isTestPatternMode = isTestPattern
             gf.downsampleMode = downsampleMode
@@ -581,6 +596,7 @@ class StreamService : Service(), ConnectChecker {
             else -> GameScreenFilterRender.FilterMode.LINEAR
         }
 
+        val isQualityBoost = intent.getBooleanExtra("isLargeScreenQualityBoost", false)
         val isTestPattern = intent.getBooleanExtra("isTestPattern", false)
         val isGameplayFilter = intent.getBooleanExtra("isGameplayFilterEnabled", true)
         val isExtremeTest = intent.getBooleanExtra("isExtremeTestMode", false)
@@ -696,11 +712,16 @@ class StreamService : Service(), ConnectChecker {
             sharpenMode = sharpenMode,
             filterMode = filterMode,
             isTestPatternMode = isTestPattern,
+            sourceWidth = realW.toFloat(),
+            sourceHeight = realH.toFloat(),
             onFrameRendered = {
                 val texId = activeGameFilter?.lastTextureId ?: 0
                 diagnostics?.onGlFrameRenderedWithTexId(texId)
             }
         ).apply {
+            this.isLargeScreenQualityBoost = isQualityBoost
+            this.sourceWidth = realW.toFloat()
+            this.sourceHeight = realH.toFloat()
             this.downsampleMode = downsampleMode
             this.isGameplayFilterEnabled = isGameplayFilter
             this.isExtremeTestMode = isExtremeTest
@@ -731,14 +752,10 @@ class StreamService : Service(), ConnectChecker {
                 val rawY = yPos.getOrNull(i) ?: 80f
 
                 // Authoritative Preview Coordinates (1:1 Normalized Mapping)
-                val targetOffsetX = rawX / 100f
-                val targetOffsetY = rawY / 100f
-                val targetScaleX = rawScale / 100f
-
                 if (isVideo) {
-                    val targetScaleY = targetScaleX * (9f / 16f) * (1920f / 1080f)
+                    val rect = overlayModelToCanvasRect(rawX, rawY, rawScale, 16f / 9f)
                     if (useChromaForThis) {
-                        // Video with GPU Chroma Key shader (green screen removed)
+                        // Video with GPU Chroma Key shader (green screen removed, true 16:9)
                         val videoChromaFilter = VideoChromaFilterRender { surfaceTexture ->
                             val mediaPlayer = MediaPlayer.create(baseContext, uri)
                             mediaPlayer?.setSurface(Surface(surfaceTexture))
@@ -747,16 +764,18 @@ class StreamService : Service(), ConnectChecker {
                             mediaPlayers.add(mediaPlayer)
                         }
                         videoChromaFilter.setSensitive(0.40f)
+                        videoChromaFilter.setOverlayScale(rect.normWidth, rect.normHeight)
+                        videoChromaFilter.setOverlayOffset(rect.normX, rect.normY)
                         rtmpDisplay.glInterface.addFilter(videoChromaFilter)
 
                         mainHandler.postDelayed({
                             try {
-                                videoChromaFilter.setOverlayScale(targetScaleX, targetScaleY)
-                                videoChromaFilter.setOverlayOffset(targetOffsetX, targetOffsetY)
+                                videoChromaFilter.setOverlayScale(rect.normWidth, rect.normHeight)
+                                videoChromaFilter.setOverlayOffset(rect.normX, rect.normY)
                             } catch (e: Exception) { e.printStackTrace() }
                         }, 500)
                     } else {
-                        // Standard video overlay
+                        // Standard video overlay (true 16:9)
                         val surfaceFilter = SurfaceFilterRender { surfaceTexture ->
                             val mediaPlayer = MediaPlayer.create(baseContext, uri)
                             mediaPlayer?.setSurface(Surface(surfaceTexture))
@@ -767,8 +786,8 @@ class StreamService : Service(), ConnectChecker {
                         rtmpDisplay.glInterface.addFilter(surfaceFilter)
                         mainHandler.postDelayed({
                             try {
-                                surfaceFilter.setScale(targetScaleX * 100f, targetScaleY * 100f)
-                                surfaceFilter.setPosition(targetOffsetX * 100f, targetOffsetY * 100f)
+                                surfaceFilter.setScale(rect.normWidth * 100f, rect.normHeight * 100f)
+                                surfaceFilter.setPosition(rect.normX * 100f, rect.normY * 100f)
                             } catch (e: Exception) { e.printStackTrace() }
                         }, 500)
                     }
@@ -1032,9 +1051,13 @@ class StreamService : Service(), ConnectChecker {
 
     private fun stopStream() {
         if (isStreamingState.value) {
-            try { rtmpDisplay.stopStream() } catch (_: Exception) {}
+            try { 
+                rtmpDisplay.onStreamDisconnected()
+                rtmpDisplay.stopStream() 
+            } catch (_: Exception) {}
             isStreamingState.value = false
-            isMicMutedState.value = false
+            // PHASE 16: Reset microphone state to OFF (muted) so next stream starts with Mic OFF
+            isMicMutedState.value = true
             streamStartTime.value = 0L
         }
 
@@ -1125,6 +1148,9 @@ class StreamService : Service(), ConnectChecker {
     override fun onNewBitrate(bitrate: Long) { }
 
     override fun onDisconnect() {
+        try {
+            rtmpDisplay.onStreamDisconnected()
+        } catch (_: Exception) {}
         mainHandler.post {
             Toast.makeText(this@StreamService, "Stream disconnected", Toast.LENGTH_SHORT).show()
         }
@@ -1139,32 +1165,6 @@ class StreamService : Service(), ConnectChecker {
     }
 
     override fun onAuthSuccess() { }
-
-    private fun removeGreenScreen(source: android.graphics.Bitmap): android.graphics.Bitmap {
-        val output = source.copy(android.graphics.Bitmap.Config.ARGB_8888, true)
-        val width = output.width
-        val height = output.height
-        val pixels = IntArray(width * height)
-        output.getPixels(pixels, 0, width, 0, 0, width, height)
-        for (i in pixels.indices) {
-            val color = pixels[i]
-            val a = (color shr 24) and 0xFF
-            if (a == 0) continue
-            val r = (color shr 16) and 0xFF
-            val g = (color shr 8) and 0xFF
-            val b = color and 0xFF
-            val maxRb = maxOf(r, b)
-            // Green screen cutoff: if green exceeds max of red/blue by 18+ units
-            if (g > maxRb && (g - maxRb) > 18) {
-                pixels[i] = 0 // transparent
-            } else if (g > maxRb) {
-                // Despill edges: clamp green so no green fringe or white glow
-                pixels[i] = (a shl 24) or (r shl 16) or (maxRb shl 8) or b
-            }
-        }
-        output.setPixels(pixels, 0, width, 0, 0, width, height)
-        return output
-    }
 
     private fun getNativeResolution(isLandscape: Boolean, targetHeight: Int): Pair<Int, Int> {
         val wm = getSystemService(Context.WINDOW_SERVICE) as WindowManager

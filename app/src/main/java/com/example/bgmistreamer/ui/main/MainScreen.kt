@@ -122,16 +122,6 @@ fun MainScreen(viewModel: StreamViewModel, modifier: Modifier = Modifier) {
                 chromaKeys[index] = overlay.chromaKey
             }
 
-            val sharpenModeParam = when {
-                viewModel.selectedSharpenMode.value.contains("LOW", ignoreCase = true) -> "LOW"
-                viewModel.selectedSharpenMode.value.contains("MEDIUM", ignoreCase = true) -> "MEDIUM"
-                else -> "OFF"
-            }
-            val filterModeParam = when {
-                viewModel.selectedFilterMode.value.contains("NEAREST", ignoreCase = true) -> "NEAREST"
-                else -> "LINEAR"
-            }
-
             putStringArrayListExtra("overlayUris", uris)
             putExtra("overlayScales", scales)
             putExtra("overlayX", xPos)
@@ -141,20 +131,15 @@ fun MainScreen(viewModel: StreamViewModel, modifier: Modifier = Modifier) {
             putExtra("gameScreenScale", viewModel.gameScreenScalePercent.value)
             putExtra("gameScreenX", viewModel.gameScreenXPercent.value)
             putExtra("gameScreenY", viewModel.gameScreenYPercent.value)
-            putExtra("downsampleTestMode", viewModel.selectedDownsampleTestMode.value)
             putExtra("isGameplayFilterEnabled", viewModel.isGameplayFilterEnabled.value)
-            putExtra("isExtremeTestMode", viewModel.isExtremeFilterTestEnabled.value)
-            putExtra("extremeTestModeIndex", viewModel.extremeFilterTestIndex.value)
+            putExtra("isLargeScreenQualityBoost", viewModel.isLargeScreenQualityBoostEnabled.value)
+            putExtra("micVolumePercent", viewModel.micVolumePercent.value)
             putExtra("gameplayGamma", viewModel.gameplayGamma.value)
             putExtra("gameplayContrast", viewModel.gameplayContrast.value)
             putExtra("gameplayBrightness", viewModel.gameplayBrightness.value)
             putExtra("gameplaySaturation", viewModel.gameplaySaturation.value)
             putExtra("gameplaySharpness", viewModel.gameplaySharpness.value)
-            putExtra("isTestPattern", viewModel.isTestPatternEnabled.value)
-            putExtra("sharpenMode", sharpenModeParam)
-            putExtra("filterMode", filterModeParam)
         }
-        android.util.Log.i("MainScreen", "SYNC_EXTREME_VALUE: ${viewModel.isExtremeFilterTestEnabled.value}, SYNC_FILTER_ENABLED: ${viewModel.isGameplayFilterEnabled.value}")
         context.startService(intent)
     }
 
@@ -164,17 +149,12 @@ fun MainScreen(viewModel: StreamViewModel, modifier: Modifier = Modifier) {
         viewModel.gameScreenScalePercent.value,
         viewModel.gameScreenXPercent.value,
         viewModel.gameScreenYPercent.value,
-        viewModel.selectedDownsampleTestMode.value,
         viewModel.isGameplayFilterEnabled.value,
-        viewModel.isExtremeFilterTestEnabled.value,
         viewModel.gameplayGamma.value,
         viewModel.gameplayContrast.value,
         viewModel.gameplayBrightness.value,
         viewModel.gameplaySaturation.value,
-        viewModel.gameplaySharpness.value,
-        viewModel.isTestPatternEnabled.value,
-        viewModel.selectedSharpenMode.value,
-        viewModel.selectedFilterMode.value
+        viewModel.gameplaySharpness.value
     ) {
         if (isStreaming) {
             delay(150)
@@ -204,38 +184,25 @@ fun MainScreen(viewModel: StreamViewModel, modifier: Modifier = Modifier) {
             val cleanKey = viewModel.streamKey.value.trim().trimStart('/')
             val fullUrl = if (cleanKey.isNotEmpty()) "$cleanBase/$cleanKey" else cleanBase
 
-            val sharpenModeParam = when {
-                viewModel.selectedSharpenMode.value.contains("LOW", ignoreCase = true) -> "LOW"
-                viewModel.selectedSharpenMode.value.contains("MEDIUM", ignoreCase = true) -> "MEDIUM"
-                else -> "OFF"
-            }
-            val filterModeParam = when {
-                viewModel.selectedFilterMode.value.contains("NEAREST", ignoreCase = true) -> "NEAREST"
-                else -> "LINEAR"
-            }
-
             val intent = Intent(context, StreamService::class.java).apply {
                 action = "START_STREAM"
                 putExtra("resultCode", result.resultCode)
                 putExtra("data", result.data)
                 putExtra("url", fullUrl)
-                putExtra("quality", viewModel.selectedQuality.value)
+                putExtra("quality", viewModel.selectedQualityPreset.value.id)
+                putExtra("qualityId", viewModel.selectedQualityPreset.value.id)
                 putExtra("isLandscape", viewModel.isLandscapeOrientation.value)
                 putExtra("chromaKey", viewModel.isChromaKeyEnabled.value)
                 putExtra("noiseSuppressor", viewModel.isNoiseSuppressorEnabled.value)
                 putExtra("echoCanceler", viewModel.isEchoCancelerEnabled.value)
-                putExtra("downsampleTestMode", viewModel.selectedDownsampleTestMode.value)
                 putExtra("isGameplayFilterEnabled", viewModel.isGameplayFilterEnabled.value)
-                putExtra("isExtremeTestMode", viewModel.isExtremeFilterTestEnabled.value)
-                putExtra("extremeTestModeIndex", viewModel.extremeFilterTestIndex.value)
+                putExtra("isLargeScreenQualityBoost", viewModel.isLargeScreenQualityBoostEnabled.value)
+                putExtra("micVolumePercent", viewModel.micVolumePercent.value)
                 putExtra("gameplayGamma", viewModel.gameplayGamma.value)
                 putExtra("gameplayContrast", viewModel.gameplayContrast.value)
                 putExtra("gameplayBrightness", viewModel.gameplayBrightness.value)
                 putExtra("gameplaySaturation", viewModel.gameplaySaturation.value)
                 putExtra("gameplaySharpness", viewModel.gameplaySharpness.value)
-                putExtra("isTestPattern", viewModel.isTestPatternEnabled.value)
-                putExtra("sharpenMode", sharpenModeParam)
-                putExtra("filterMode", filterModeParam)
 
                 val uris = arrayListOf<String>()
                 val scales = FloatArray(viewModel.overlays.size)
@@ -260,8 +227,6 @@ fun MainScreen(viewModel: StreamViewModel, modifier: Modifier = Modifier) {
                 putExtra("gameScreenScale", viewModel.gameScreenScalePercent.value)
                 putExtra("gameScreenX", viewModel.gameScreenXPercent.value)
                 putExtra("gameScreenY", viewModel.gameScreenYPercent.value)
-                putExtra("sharpenMode", sharpenModeParam)
-                putExtra("filterMode", filterModeParam)
             }
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 context.startForegroundService(intent)
@@ -297,21 +262,57 @@ fun MainScreen(viewModel: StreamViewModel, modifier: Modifier = Modifier) {
                 .verticalScroll(rememberScrollState()),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            Text(
-                text = "Live Studio",
-                style = MaterialTheme.typography.headlineMedium,
-                color = MaterialTheme.colorScheme.primary,
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier.padding(bottom = 4.dp)
-            )
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 12.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column {
+                    Text(
+                        text = "Nexus Stream",
+                        style = MaterialTheme.typography.headlineSmall,
+                        color = MaterialTheme.colorScheme.primary,
+                        fontWeight = FontWeight.ExtraBold
+                    )
+                    Text(
+                        text = "1080p60 Live Studio",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
 
-            Text(
-                text = "Preview: 16:9 • Mobile Screen: 2.17:1 • Overlays: 16:9",
-                style = MaterialTheme.typography.bodySmall,
-                color = Color(0xFF00E5FF),
-                fontWeight = FontWeight.SemiBold,
-                modifier = Modifier.padding(bottom = 14.dp)
-            )
+                Surface(
+                    shape = RoundedCornerShape(16.dp),
+                    color = if (isStreaming) Color(0x334CAF50) else MaterialTheme.colorScheme.surfaceVariant,
+                    border = androidx.compose.foundation.BorderStroke(
+                        1.dp,
+                        if (isStreaming) Color(0xFF4CAF50) else MaterialTheme.colorScheme.outlineVariant
+                    )
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(8.dp)
+                                .background(
+                                    if (isStreaming) Color(0xFF4CAF50) else Color(0xFF9E9E9E),
+                                    shape = androidx.compose.foundation.shape.CircleShape
+                                )
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = if (isStreaming) "LIVE • $durationText" else "READY",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = if (isStreaming) Color(0xFF4CAF50) else MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
 
             // 16:9 Canvas Layout Editor
             Box(
@@ -459,17 +460,22 @@ fun MainScreen(viewModel: StreamViewModel, modifier: Modifier = Modifier) {
                         }
                     }
 
-                    // 2. Overlays Previews (Exact 16:9 Aspect Ratio with Dashed Border)
+                    // 2. Overlays Previews (Unified Authoritative 1920x1080 OverlayRect)
                     viewModel.overlays.forEachIndexed { index, overlay ->
                         val currentOverlayState = rememberUpdatedState(overlay)
 
-                        val overlayWidthPx = (overlay.scalePercent / 100f * canvasSize.width).roundToInt()
-                        val overlayHeightPx = (overlayWidthPx * 9f / 16f).roundToInt()
+                        val rect = com.example.bgmistreamer.overlayModelToCanvasRect(
+                            overlay.xPercent,
+                            overlay.yPercent,
+                            overlay.scalePercent
+                        )
+                        val previewScaleX = canvasSize.width.toFloat() / 1920f
+                        val previewScaleY = canvasSize.height.toFloat() / 1080f
 
-                        val offsetXPx = ((overlay.xPercent / 100f) * canvasSize.width).roundToInt()
-                            .coerceIn(0, (canvasSize.width - overlayWidthPx).coerceAtLeast(0))
-                        val offsetYPx = ((overlay.yPercent / 100f) * canvasSize.height).roundToInt()
-                            .coerceIn(0, (canvasSize.height - overlayHeightPx).coerceAtLeast(0))
+                        val overlayWidthPx = (rect.widthPx * previewScaleX).roundToInt()
+                        val overlayHeightPx = (rect.heightPx * previewScaleY).roundToInt()
+                        val offsetXPx = (rect.leftPx * previewScaleX).roundToInt()
+                        val offsetYPx = (rect.topPx * previewScaleY).roundToInt()
 
                         val overlayWidthDp = with(density) { overlayWidthPx.toDp() }
                         val overlayHeightDp = with(density) { overlayHeightPx.toDp() }
@@ -478,6 +484,16 @@ fun MainScreen(viewModel: StreamViewModel, modifier: Modifier = Modifier) {
                         val imageRequest = coil.request.ImageRequest.Builder(context)
                             .data(Uri.parse(overlay.uri))
                             .decoderFactory(coil.decode.VideoFrameDecoder.Factory())
+                            .apply {
+                                if (overlay.chromaKey) {
+                                    transformations(object : coil.transform.Transformation {
+                                        override val cacheKey: String = "chroma_key_${overlay.id}"
+                                        override suspend fun transform(input: android.graphics.Bitmap, size: coil.size.Size): android.graphics.Bitmap {
+                                            return com.example.bgmistreamer.removeGreenScreen(input)
+                                        }
+                                    })
+                                }
+                            }
                             .build()
 
                         Box(
@@ -485,12 +501,15 @@ fun MainScreen(viewModel: StreamViewModel, modifier: Modifier = Modifier) {
                                 .offset {
                                     val curOverlay = currentOverlayState.value
                                     val curCanvas = currentCanvasSizeState.value
-                                    val wPx = (curOverlay.scalePercent / 100f * curCanvas.width).roundToInt()
-                                    val hPx = (wPx * 9f / 16f).roundToInt()
-                                    val maxXPx = (curCanvas.width - wPx).coerceAtLeast(0)
-                                    val maxYPx = (curCanvas.height - hPx).coerceAtLeast(0)
-                                    val xPx = ((curOverlay.xPercent / 100f) * curCanvas.width).roundToInt().coerceIn(0, maxXPx)
-                                    val yPx = ((curOverlay.yPercent / 100f) * curCanvas.height).roundToInt().coerceIn(0, maxYPx)
+                                    val curRect = com.example.bgmistreamer.overlayModelToCanvasRect(
+                                        curOverlay.xPercent,
+                                        curOverlay.yPercent,
+                                        curOverlay.scalePercent
+                                    )
+                                    val sX = curCanvas.width.toFloat() / 1920f
+                                    val sY = curCanvas.height.toFloat() / 1080f
+                                    val xPx = (curRect.leftPx * sX).roundToInt()
+                                    val yPx = (curRect.topPx * sY).roundToInt()
                                     IntOffset(xPx, yPx)
                                 }
                                 .size(width = overlayWidthDp, height = overlayHeightDp)
@@ -512,31 +531,24 @@ fun MainScreen(viewModel: StreamViewModel, modifier: Modifier = Modifier) {
 
                                         if (previewW <= 0f || previewH <= 0f) return@awaitEachGesture
 
-                                        val overlayWPx = (curOverlay.scalePercent / 100f) * previewW
-                                        val overlayHPx = overlayWPx * (9f / 16f)
-
-                                        val maxXPx = (previewW - overlayWPx).coerceAtLeast(0f)
-                                        val maxYPx = (previewH - overlayHPx).coerceAtLeast(0f)
-
-                                        val startOverlayLeftPx = ((curOverlay.xPercent / 100f) * previewW).coerceIn(0f, maxXPx)
-                                        val startOverlayTopPx = ((curOverlay.yPercent / 100f) * previewH).coerceIn(0f, maxYPx)
-
-                                        val grabOffsetX = downPos.x
-                                        val grabOffsetY = downPos.y
-
-                                        val initialFingerX = startOverlayLeftPx + grabOffsetX
-                                        val initialFingerY = startOverlayTopPx + grabOffsetY
-
                                         val initialRect = com.example.bgmistreamer.overlayModelToCanvasRect(
                                             curOverlay.xPercent,
                                             curOverlay.yPercent,
                                             curOverlay.scalePercent
                                         )
 
-                                        Log.i(
-                                            "OVERLAY_PHASE29_START",
-                                            "overlayId=${curOverlay.id} pointerLocal=(${downPos.x},${downPos.y}) previewSize=($previewW,$previewH) overlayStart=($startOverlayLeftPx,$startOverlayTopPx) grabOffset=($grabOffsetX,$grabOffsetY) modelX=${curOverlay.xPercent} modelY=${curOverlay.yPercent} scale=${curOverlay.scalePercent}"
-                                        )
+                                        val pScaleX = previewW / 1920f
+                                        val pScaleY = previewH / 1080f
+
+                                        val startOverlayLeftPreview = initialRect.leftPx * pScaleX
+                                        val startOverlayTopPreview = initialRect.topPx * pScaleY
+
+                                        // Exact grab offset preserved relative to overlay bounds
+                                        val grabOffsetX = downPos.x
+                                        val grabOffsetY = downPos.y
+
+                                        val initialFingerX = startOverlayLeftPreview + grabOffsetX
+                                        val initialFingerY = startOverlayTopPreview + grabOffsetY
 
                                         viewModel.selectElement(curOverlay.id)
 
@@ -551,23 +563,7 @@ fun MainScreen(viewModel: StreamViewModel, modifier: Modifier = Modifier) {
                                             val change = event.changes.firstOrNull { it.id == pointerId } ?: break
                                             if (!change.pressed) {
                                                 // Pointer up / released
-                                                val finalFingerX = initialFingerX + totalPanX
-                                                val finalFingerY = initialFingerY + totalPanY
-                                                if (isDragging) {
-                                                    val finalOverlay = currentOverlayState.value
-                                                    val finalLeftPx = (finalOverlay.xPercent / 100f) * previewW
-                                                    val finalTopPx = (finalOverlay.yPercent / 100f) * previewH
-                                                    val finalRect = com.example.bgmistreamer.overlayModelToCanvasRect(
-                                                        finalOverlay.xPercent,
-                                                        finalOverlay.yPercent,
-                                                        finalOverlay.scalePercent
-                                                    )
-
-                                                    Log.i(
-                                                        "OVERLAY_PHASE29_END",
-                                                        "overlayId=${finalOverlay.id} model=(${finalOverlay.xPercent},${finalOverlay.yPercent},${finalOverlay.scalePercent}) preview=($finalLeftPx,$finalTopPx) canvas=(${finalRect.x},${finalRect.y},${finalRect.width},${finalRect.height}) bottomGap=${finalRect.bottomGap}"
-                                                    )
-                                                } else {
+                                                if (!isDragging) {
                                                     val now = change.uptimeMillis
                                                     if (now - lastTapTime < 350L && (now - lastTapTime) > 40L) {
                                                         viewModel.removeOverlay(curOverlay.id)
@@ -594,22 +590,34 @@ fun MainScreen(viewModel: StreamViewModel, modifier: Modifier = Modifier) {
 
                                             if (isDragging) {
                                                 change.consume()
+
                                                 val fingerX = initialFingerX + totalPanX
                                                 val fingerY = initialFingerY + totalPanY
 
-                                                val rawNewLeftPx = startOverlayLeftPx + totalPanX
-                                                val rawNewTopPx = startOverlayTopPx + totalPanY
+                                                val newLeftPreview = fingerX - grabOffsetX
+                                                val newTopPreview = fingerY - grabOffsetY
 
-                                                val clampedNewLeftPx = rawNewLeftPx.coerceIn(0f, maxXPx)
-                                                val clampedNewTopPx = rawNewTopPx.coerceIn(0f, maxYPx)
+                                                // Convert to authoritative 1920x1080 canvas pixels
+                                                val canvasLeftPx = newLeftPreview / pScaleX
+                                                val canvasTopPx = newTopPreview / pScaleY
 
-                                                val newXPercent = (clampedNewLeftPx / previewW) * 100f
-                                                val newYPercent = (clampedNewTopPx / previewH) * 100f
+                                                // Allow overlay to move partially or completely outside canvas boundaries
+                                                val clampedCanvasLeftPx = canvasLeftPx.coerceIn(
+                                                    -initialRect.widthPx,
+                                                    1920f
+                                                )
+                                                val clampedCanvasTopPx = canvasTopPx.coerceIn(
+                                                    -initialRect.heightPx,
+                                                    1080f
+                                                )
+
+                                                // Normalized percentages
+                                                val newXPercent = (clampedCanvasLeftPx / 1920f) * 100f
+                                                val newYPercent = (clampedCanvasTopPx / 1080f) * 100f
 
                                                 viewModel.updateOverlayPosition(curOverlay.id, newXPercent, newYPercent)
 
-                                                // Calculate authoritative 1920x1080 canvas rect
-                                                val rect = com.example.bgmistreamer.overlayModelToCanvasRect(
+                                                val updatedRect = com.example.bgmistreamer.overlayModelToCanvasRect(
                                                     newXPercent,
                                                     newYPercent,
                                                     curOverlay.scalePercent
@@ -617,15 +625,10 @@ fun MainScreen(viewModel: StreamViewModel, modifier: Modifier = Modifier) {
 
                                                 // Instantly update active live filter shader transform on GL thread
                                                 com.example.bgmistreamer.StreamService.activeImageOverlayFilterInstance?.updateTransform(
-                                                    rect.normX,
-                                                    rect.normY,
-                                                    rect.normWidth,
-                                                    rect.normHeight
-                                                )
-
-                                                Log.i(
-                                                    "OVERLAY_PHASE29_MOVE",
-                                                    "overlayId=${curOverlay.id} pointerLocal=(${downPos.x + totalPanX},${downPos.y + totalPanY}) totalPan=($totalPanX,$totalPanY) rawX=$rawNewLeftPx rawY=$rawNewTopPx clampedX=$clampedNewLeftPx clampedY=$clampedNewTopPx modelX=$newXPercent modelY=$newYPercent canvasX=${rect.x} canvasY=${rect.y} canvasWidth=${rect.width} canvasHeight=${rect.height} bottomGap=${rect.bottomGap}"
+                                                    updatedRect.normX,
+                                                    updatedRect.normY,
+                                                    updatedRect.normWidth,
+                                                    updatedRect.normHeight
                                                 )
                                             }
                                         }
@@ -763,22 +766,61 @@ fun MainScreen(viewModel: StreamViewModel, modifier: Modifier = Modifier) {
                             Text("Size / Scale: ${currentOverlay.scalePercent.roundToInt()}%", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                             Slider(
                                 value = currentOverlay.scalePercent,
-                                onValueChange = { viewModel.updateOverlayScale(currentOverlay.id, it) },
+                                onValueChange = {
+                                    viewModel.updateOverlayScale(currentOverlay.id, it)
+                                    val updatedRect = com.example.bgmistreamer.overlayModelToCanvasRect(
+                                        currentOverlay.xPercent,
+                                        currentOverlay.yPercent,
+                                        it
+                                    )
+                                    com.example.bgmistreamer.StreamService.activeImageOverlayFilterInstance?.updateTransform(
+                                        updatedRect.normX,
+                                        updatedRect.normY,
+                                        updatedRect.normWidth,
+                                        updatedRect.normHeight
+                                    )
+                                },
                                 valueRange = 5f..100f
                             )
 
                             Text("Horizontal Position (X): ${currentOverlay.xPercent.roundToInt()}%", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                             Slider(
-                                value = currentOverlay.xPercent,
-                                onValueChange = { viewModel.updateOverlayPosition(currentOverlay.id, it, currentOverlay.yPercent) },
-                                valueRange = 0f..100f
+                                value = currentOverlay.xPercent.coerceIn(-100f, 100f),
+                                onValueChange = {
+                                    viewModel.updateOverlayPosition(currentOverlay.id, it, currentOverlay.yPercent)
+                                    val updatedRect = com.example.bgmistreamer.overlayModelToCanvasRect(
+                                        it,
+                                        currentOverlay.yPercent,
+                                        currentOverlay.scalePercent
+                                    )
+                                    com.example.bgmistreamer.StreamService.activeImageOverlayFilterInstance?.updateTransform(
+                                        updatedRect.normX,
+                                        updatedRect.normY,
+                                        updatedRect.normWidth,
+                                        updatedRect.normHeight
+                                    )
+                                },
+                                valueRange = -100f..100f
                             )
 
                             Text("Vertical Position (Y): ${currentOverlay.yPercent.roundToInt()}%", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                             Slider(
-                                value = currentOverlay.yPercent,
-                                onValueChange = { viewModel.updateOverlayPosition(currentOverlay.id, currentOverlay.xPercent, it) },
-                                valueRange = 0f..100f
+                                value = currentOverlay.yPercent.coerceIn(-100f, 100f),
+                                onValueChange = {
+                                    viewModel.updateOverlayPosition(currentOverlay.id, currentOverlay.xPercent, it)
+                                    val updatedRect = com.example.bgmistreamer.overlayModelToCanvasRect(
+                                        currentOverlay.xPercent,
+                                        it,
+                                        currentOverlay.scalePercent
+                                    )
+                                    com.example.bgmistreamer.StreamService.activeImageOverlayFilterInstance?.updateTransform(
+                                        updatedRect.normX,
+                                        updatedRect.normY,
+                                        updatedRect.normWidth,
+                                        updatedRect.normHeight
+                                    )
+                                },
+                                valueRange = -100f..100f
                             )
 
                             Row(
@@ -786,23 +828,58 @@ fun MainScreen(viewModel: StreamViewModel, modifier: Modifier = Modifier) {
                                 horizontalArrangement = Arrangement.spacedBy(6.dp)
                             ) {
                                 OutlinedButton(
-                                    onClick = { viewModel.updateOverlayPosition(currentOverlay.id, currentOverlay.xPercent, 0f) },
+                                    onClick = {
+                                        viewModel.updateOverlayPosition(currentOverlay.id, currentOverlay.xPercent, 0f)
+                                        val updatedRect = com.example.bgmistreamer.overlayModelToCanvasRect(
+                                            currentOverlay.xPercent,
+                                            0f,
+                                            currentOverlay.scalePercent
+                                        )
+                                        com.example.bgmistreamer.StreamService.activeImageOverlayFilterInstance?.updateTransform(
+                                            updatedRect.normX,
+                                            updatedRect.normY,
+                                            updatedRect.normWidth,
+                                            updatedRect.normHeight
+                                        )
+                                    },
                                     modifier = Modifier.weight(1f)
                                 ) { Text("Top", fontSize = 11.sp) }
 
                                 OutlinedButton(
                                     onClick = {
-                                        val centeredX = (50f - currentOverlay.scalePercent / 2f).coerceAtLeast(0f)
-                                        val centeredY = (50f - currentOverlay.scalePercent / 2f).coerceAtLeast(0f)
+                                        val centeredX = (100f - currentOverlay.scalePercent) / 2f
+                                        val centeredY = (100f - currentOverlay.scalePercent) / 2f
                                         viewModel.updateOverlayPosition(currentOverlay.id, centeredX, centeredY)
+                                        val updatedRect = com.example.bgmistreamer.overlayModelToCanvasRect(
+                                            centeredX,
+                                            centeredY,
+                                            currentOverlay.scalePercent
+                                        )
+                                        com.example.bgmistreamer.StreamService.activeImageOverlayFilterInstance?.updateTransform(
+                                            updatedRect.normX,
+                                            updatedRect.normY,
+                                            updatedRect.normWidth,
+                                            updatedRect.normHeight
+                                        )
                                     },
                                     modifier = Modifier.weight(1f)
                                 ) { Text("Center", fontSize = 11.sp) }
 
                                 OutlinedButton(
                                     onClick = {
-                                        val bottomY = (100f - currentOverlay.scalePercent).coerceAtLeast(0f)
+                                        val bottomY = 100f - currentOverlay.scalePercent
                                         viewModel.updateOverlayPosition(currentOverlay.id, currentOverlay.xPercent, bottomY)
+                                        val updatedRect = com.example.bgmistreamer.overlayModelToCanvasRect(
+                                            currentOverlay.xPercent,
+                                            bottomY,
+                                            currentOverlay.scalePercent
+                                        )
+                                        com.example.bgmistreamer.StreamService.activeImageOverlayFilterInstance?.updateTransform(
+                                            updatedRect.normX,
+                                            updatedRect.normY,
+                                            updatedRect.normWidth,
+                                            updatedRect.normHeight
+                                        )
                                     },
                                     modifier = Modifier.weight(1f)
                                 ) { Text("Bottom", fontSize = 11.sp) }
@@ -811,6 +888,13 @@ fun MainScreen(viewModel: StreamViewModel, modifier: Modifier = Modifier) {
                                     onClick = {
                                         viewModel.updateOverlayPosition(currentOverlay.id, 0f, 0f)
                                         viewModel.updateOverlayScale(currentOverlay.id, 100f)
+                                        val updatedRect = com.example.bgmistreamer.overlayModelToCanvasRect(0f, 0f, 100f)
+                                        com.example.bgmistreamer.StreamService.activeImageOverlayFilterInstance?.updateTransform(
+                                            updatedRect.normX,
+                                            updatedRect.normY,
+                                            updatedRect.normWidth,
+                                            updatedRect.normHeight
+                                        )
                                     },
                                     modifier = Modifier.weight(1f)
                                 ) { Text("Fit", fontSize = 11.sp) }
@@ -865,7 +949,7 @@ fun MainScreen(viewModel: StreamViewModel, modifier: Modifier = Modifier) {
                     )
                 ) {
                     Text(
-                        text = if (isMicMuted) "🔇 Microphone: MUTED  (Tap to Unmute)" else "🎤 Microphone: LIVE  (Tap to Mute)",
+                        text = if (isMicMuted) "🎙️ Mic OFF  (Tap to Enable)" else "🎤 Mic ON  (Tap to Mute)",
                         fontSize = 16.sp,
                         fontWeight = FontWeight.Bold,
                         color = if (isMicMuted) MaterialTheme.colorScheme.onErrorContainer else MaterialTheme.colorScheme.onSecondaryContainer
@@ -886,6 +970,21 @@ fun MainScreen(viewModel: StreamViewModel, modifier: Modifier = Modifier) {
                     Text("🔴  $durationText  — Tap to Stop", fontSize = 20.sp, fontWeight = FontWeight.ExtraBold)
                 }
             } else {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.Center
+                ) {
+                    Text(
+                        text = "🎙️ Mic OFF (Starts muted on Go Live)",
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+
                 Button(
                     onClick = {
                         if (viewModel.rtmpUrl.value.isBlank() || viewModel.streamKey.value.isBlank()) {

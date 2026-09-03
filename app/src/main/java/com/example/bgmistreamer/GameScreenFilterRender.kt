@@ -38,6 +38,8 @@ class GameScreenFilterRender(
     var filterMode: FilterMode = FilterMode.LINEAR,
     var sharpenMode: SharpenMode = SharpenMode.SHARPEN_OFF,
     var isTestPatternMode: Boolean = false,
+    var sourceWidth: Float = 2400f,
+    var sourceHeight: Float = 1080f,
     var onFrameRendered: (() -> Unit)? = null
 ) : BaseFilterRender() {
 
@@ -72,6 +74,7 @@ class GameScreenFilterRender(
     var lastTextureId: Int = 0
 
     // Phase 18, 20 & 26: Gameplay Color & Sharpness Filter Parameters
+    @Volatile var isLargeScreenQualityBoost: Boolean = false
     @Volatile var isGameplayFilterEnabled: Boolean = true
     @Volatile var isExtremeTestMode: Boolean = false
     @Volatile var extremeTestIndex: Int = 1
@@ -89,6 +92,11 @@ class GameScreenFilterRender(
         android.util.Log.i("GameScreenFilter", "ACTIVE_GAME_FILTER_CREATED instanceId=$instanceId")
     }
 
+    fun updateSourceDimensions(w: Float, h: Float) {
+        if (w > 0f) sourceWidth = w
+        if (h > 0f) sourceHeight = h
+    }
+
     fun updateParameters(
         enabled: Boolean,
         extreme: Boolean,
@@ -97,7 +105,8 @@ class GameScreenFilterRender(
         contrast: Float,
         brightness: Float,
         saturation: Float,
-        sharpness: Float
+        sharpness: Float,
+        qualityBoost: Boolean = isLargeScreenQualityBoost
     ) {
         isGameplayFilterEnabled = enabled
         isExtremeTestMode = extreme
@@ -107,9 +116,10 @@ class GameScreenFilterRender(
         gameplayBrightness = brightness
         gameplaySaturation = saturation
         gameplaySharpness = sharpness
+        isLargeScreenQualityBoost = qualityBoost
         android.util.Log.i(
             "GameScreenFilter",
-            "GAME_FILTER_UPDATE_REQUEST instanceId=$instanceId gamma=$gamma contrast=$contrast brightness=$brightness saturation=$saturation sharpness=$sharpness extreme=$extremeIdx enabled=$enabled"
+            "GAME_FILTER_UPDATE_REQUEST instanceId=$instanceId gamma=$gamma contrast=$contrast brightness=$brightness saturation=$saturation sharpness=$sharpness extreme=$extremeIdx enabled=$enabled qualityBoost=$qualityBoost"
         )
     }
 
@@ -140,6 +150,8 @@ class GameScreenFilterRender(
         uniform float uSharpenAmount;
         uniform int uSamplingMethod;
         uniform int uIsTestPattern;
+        uniform int uIsQualityBoost;
+        uniform vec2 uSourceTexelSize;
 
         // Phase 18 & 20 Gameplay Color Filter Uniforms
         uniform int uIsGameplayFilterEnabled;
@@ -209,7 +221,7 @@ class GameScreenFilterRender(
 
         // Mode D: High-Quality GPU Bicubic/Catmull-Rom Reconstruction Filter
         vec4 sampleHighQuality(vec2 uv) {
-            vec2 texel = vec2(1.0 / 2400.0, 1.0 / 1080.0);
+            vec2 texel = uSourceTexelSize;
             vec4 c = applyColorGrading(texture2D(uSampler, uv));
             vec4 t = applyColorGrading(texture2D(uSampler, uv + vec2(0.0, texel.y * 0.75)));
             vec4 b = applyColorGrading(texture2D(uSampler, uv - vec2(0.0, texel.y * 0.75)));
@@ -222,8 +234,44 @@ class GameScreenFilterRender(
             return clamp(recon, minCol, maxCol);
         }
 
+        // Large-Screen Quality Boost: GPU Adaptive Anti-Ringing Detail Reconstruction
+        vec4 sampleQualityBoost(vec2 uv) {
+            // Truly dynamic source texel size derived from the actual capture dimensions (e.g. 1.0/2400, 1.0/1080)
+            vec2 srcTexel = uSourceTexelSize;
+
+            vec4 c = applyColorGrading(texture2D(uSampler, uv));
+            vec4 t = applyColorGrading(texture2D(uSampler, uv + vec2(0.0, srcTexel.y)));
+            vec4 b = applyColorGrading(texture2D(uSampler, uv - vec2(0.0, srcTexel.y)));
+            vec4 l = applyColorGrading(texture2D(uSampler, uv - vec2(srcTexel.x, 0.0)));
+            vec4 r = applyColorGrading(texture2D(uSampler, uv + vec2(srcTexel.x, 0.0)));
+
+            // Local neighborhood envelope for strict anti-ringing protection
+            vec4 minCol = min(c, min(min(t, b), min(l, r)));
+            vec4 maxCol = max(c, max(max(t, b), max(l, r)));
+
+            // Calculate Rec.709 luminance (0.2126R + 0.7152G + 0.0722B)
+            float lumaC = dot(c.rgb, vec3(0.2126, 0.7152, 0.0722));
+            float lumaT = dot(t.rgb, vec3(0.2126, 0.7152, 0.0722));
+            float lumaB = dot(b.rgb, vec3(0.2126, 0.7152, 0.0722));
+            float lumaL = dot(l.rgb, vec3(0.2126, 0.7152, 0.0722));
+            float lumaR = dot(r.rgb, vec3(0.2126, 0.7152, 0.0722));
+
+            float minLuma = min(lumaC, min(min(lumaT, lumaB), min(lumaL, lumaR)));
+            float maxLuma = max(lumaC, max(max(lumaT, lumaB), max(lumaL, lumaR)));
+            float contrastRange = maxLuma - minLuma;
+
+            // Adaptive weight based on local contrast (preserves fine text & HUD detail; scales down on high-contrast edges to prevent haloing/overshoot)
+            float weight = clamp(0.18 * (1.0 - smoothstep(0.30, 0.80, contrastRange)), 0.0, 0.18);
+            vec4 reconstructed = c + (c * 4.0 - (t + b + l + r)) * weight;
+
+            // Anti-ringing clamp to local envelope
+            return clamp(reconstructed, minCol, maxCol);
+        }
+
         vec4 sampleColor(vec2 uv) {
-            if (uSamplingMethod == 1) {
+            if (uIsQualityBoost == 1) {
+                return sampleQualityBoost(uv);
+            } else if (uSamplingMethod == 1) {
                 return sampleHighQuality(uv);
             } else {
                 return sampleWithSharpen(uv);
@@ -319,6 +367,8 @@ class GameScreenFilterRender(
     private var uSharpenAmountHandle = 0
     private var uSamplingMethodHandle = 0
     private var uIsTestPatternHandle = 0
+    private var uIsQualityBoostHandle = 0
+    private var uSourceTexelSizeHandle = 0
     private var uIsGameplayFilterEnabledHandle = 0
     private var uExtremeTestHandle = 0
     private var uGammaHandle = 0
@@ -380,6 +430,8 @@ class GameScreenFilterRender(
         uSharpenAmountHandle = GLES20.glGetUniformLocation(program, "uSharpenAmount")
         uSamplingMethodHandle = GLES20.glGetUniformLocation(program, "uSamplingMethod")
         uIsTestPatternHandle = GLES20.glGetUniformLocation(program, "uIsTestPattern")
+        uIsQualityBoostHandle = GLES20.glGetUniformLocation(program, "uIsQualityBoost")
+        uSourceTexelSizeHandle = GLES20.glGetUniformLocation(program, "uSourceTexelSize")
         uIsGameplayFilterEnabledHandle = GLES20.glGetUniformLocation(program, "uIsGameplayFilterEnabled")
         uExtremeTestHandle = GLES20.glGetUniformLocation(program, "uExtremeTest")
         uGammaHandle = GLES20.glGetUniformLocation(program, "uGamma")
@@ -436,6 +488,9 @@ class GameScreenFilterRender(
             baseSharpenVal
         }
 
+        val srcW = if (sourceWidth > 0f) sourceWidth else 2400f
+        val srcH = if (sourceHeight > 0f) sourceHeight else 1080f
+
         GLES20.glUniformMatrix4fv(uMVPHandle, 1, false, MVPMatrix, 0)
         GLES20.glUniformMatrix4fv(uSTHandle, 1, false, STMatrix, 0)
         GLES20.glUniform1f(uContentHeightHandle, visibleRatio)
@@ -448,6 +503,8 @@ class GameScreenFilterRender(
         GLES20.glUniform1f(uSharpenAmountHandle, effSharpenVal)
         GLES20.glUniform1i(uSamplingMethodHandle, if (isHq) 1 else 0)
         GLES20.glUniform1i(uIsTestPatternHandle, if (isTestPatternMode) 1 else 0)
+        GLES20.glUniform1i(uIsQualityBoostHandle, if (isLargeScreenQualityBoost) 1 else 0)
+        GLES20.glUniform2f(uSourceTexelSizeHandle, 1.0f / srcW, 1.0f / srcH)
 
         GLES20.glUniform1i(uIsGameplayFilterEnabledHandle, if (isFilterActive) 1 else 0)
         val extremeVal = if (isExtremeTestMode) extremeTestIndex.coerceIn(1, 3) else 0

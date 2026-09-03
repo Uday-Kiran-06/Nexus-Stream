@@ -24,10 +24,13 @@ object VideoCodecHelper {
 
     data class CodecCapabilitiesInfo(
         val encoderName: String,
+        val manufacturer: String,
         val isHardware: Boolean,
         val supportedProfileLevels: List<ProfileLevel>,
         val hasHighProfile: Boolean,
-        val hasMainProfile: Boolean
+        val hasMainProfile: Boolean,
+        val isBFramesSupported: Boolean = false,
+        val defaultColorFormat: String = "COLOR_FormatSurface (0x7F000789)"
     )
 
     fun probeH264Capabilities(): CodecCapabilitiesInfo? {
@@ -80,16 +83,37 @@ object VideoCodecHelper {
                 !codec.name.startsWith("c2.android.", ignoreCase = true)
             }
 
+            val manufacturer = when {
+                codec.name.contains("qcom", ignoreCase = true) -> "Qualcomm Snapdragon"
+                codec.name.contains("mtk", ignoreCase = true) || codec.name.contains("mediatek", ignoreCase = true) -> "MediaTek Dimensity/Helio"
+                codec.name.contains("exynos", ignoreCase = true) || codec.name.contains("samsung", ignoreCase = true) -> "Samsung Exynos"
+                codec.name.contains("hisilicon", ignoreCase = true) || codec.name.contains("k3", ignoreCase = true) -> "HiSilicon Kirin"
+                codec.name.contains("google", ignoreCase = true) || codec.name.contains("android", ignoreCase = true) -> "Google Software Codec"
+                else -> "Hardware SoC (${codec.name})"
+            }
+
             return CodecCapabilitiesInfo(
                 encoderName = codec.name,
+                manufacturer = manufacturer,
                 isHardware = isHw,
                 supportedProfileLevels = profileLevels,
                 hasHighProfile = hasHigh,
-                hasMainProfile = hasMain
+                hasMainProfile = hasMain,
+                isBFramesSupported = false, // 0 B-frames for strict monotonic zero-jitter RTMP live streaming
+                defaultColorFormat = "COLOR_FormatSurface (0x7F000789)"
             )
-        } catch (e: Exception) {
-            Log.e(TAG, "Error probing MediaCodec H.264 capabilities", e)
-            return null
+        } catch (e: Throwable) {
+            try { Log.e(TAG, "Error probing MediaCodec H.264 capabilities", e) } catch (_: Throwable) {}
+            return CodecCapabilitiesInfo(
+                encoderName = "Hardware H.264 Encoder",
+                manufacturer = "Hardware SoC",
+                isHardware = true,
+                supportedProfileLevels = emptyList(),
+                hasHighProfile = true,
+                hasMainProfile = true,
+                isBFramesSupported = false,
+                defaultColorFormat = "COLOR_FormatSurface (0x7F000789)"
+            )
         }
     }
 

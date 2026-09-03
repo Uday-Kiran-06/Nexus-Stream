@@ -92,7 +92,7 @@ fun SettingsScreen(viewModel: StreamViewModel, modifier: Modifier = Modifier) {
                         modifier = Modifier.padding(bottom = 12.dp)
                     )
                     
-                    viewModel.qualities.forEach { quality ->
+                    viewModel.qualityPresets.forEach { preset ->
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
                             modifier = Modifier
@@ -100,20 +100,49 @@ fun SettingsScreen(viewModel: StreamViewModel, modifier: Modifier = Modifier) {
                                 .padding(vertical = 4.dp)
                         ) {
                             RadioButton(
-                                selected = viewModel.selectedQuality.value == quality,
+                                selected = viewModel.selectedQualityPreset.value == preset,
                                 onClick = { 
-                                    viewModel.selectedQuality.value = quality 
-                                    viewModel.saveSettings()
+                                    viewModel.selectQualityPreset(preset)
                                 }
                             )
                             Text(
-                                text = quality, 
+                                text = preset.displayLabel, 
                                 style = MaterialTheme.typography.bodyLarge,
-                                color = if (viewModel.selectedQuality.value == quality) 
+                                color = if (viewModel.selectedQualityPreset.value == preset) 
                                         MaterialTheme.colorScheme.onSurface 
                                         else MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
+                    }
+
+                    Spacer(modifier = Modifier.height(12.dp))
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Column(modifier = Modifier.weight(1f).padding(end = 16.dp)) {
+                            Text(
+                                "Large Screen Quality Boost",
+                                style = MaterialTheme.typography.bodyLarge,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            Text(
+                                "Improves GPU reconstruction and detail retention for large laptop and desktop displays. Uses additional GPU processing.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Switch(
+                            checked = viewModel.isLargeScreenQualityBoostEnabled.value,
+                            onCheckedChange = {
+                                viewModel.isLargeScreenQualityBoostEnabled.value = it
+                                viewModel.onFilterChanged()
+                            }
+                        )
                     }
                 }
             }
@@ -123,11 +152,10 @@ fun SettingsScreen(viewModel: StreamViewModel, modifier: Modifier = Modifier) {
                     containerColor = MaterialTheme.colorScheme.surfaceVariant
                 ),
                 shape = RoundedCornerShape(24.dp),
-                modifier = Modifier.fillMaxWidth()
+                modifier = Modifier.fillMaxWidth().padding(bottom = 24.dp)
             ) {
                 Column(modifier = Modifier.padding(24.dp)) {
-                    Spacer(modifier = Modifier.height(16.dp))
-                    Text("Stream Orientation", style = MaterialTheme.typography.titleMedium)
+                    Text("Stream Orientation", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
                     Row(
                         modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
                         verticalAlignment = Alignment.CenterVertically
@@ -142,27 +170,22 @@ fun SettingsScreen(viewModel: StreamViewModel, modifier: Modifier = Modifier) {
                         )
                         Text(text = "Landscape", modifier = Modifier.weight(1f).padding(start = 8.dp))
                     }
-                    
-                    Spacer(modifier = Modifier.height(16.dp))
-                    Text("Experimental", style = MaterialTheme.typography.titleMedium)
                 }
             }
-            
-            Spacer(modifier = Modifier.height(16.dp))
             
             Surface(
                 color = MaterialTheme.colorScheme.surfaceVariant,
                 shape = RoundedCornerShape(24.dp),
-                modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp)
+                modifier = Modifier.fillMaxWidth().padding(bottom = 24.dp)
             ) {
                 Row(
                     modifier = Modifier.fillMaxWidth().padding(24.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
-                    Column {
-                        Text("Chroma Key", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurface)
-                        Text("Green screen removal for overlays", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Column(modifier = Modifier.weight(1f).padding(end = 16.dp)) {
+                        Text("Chroma Key", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface)
+                        Text("Green screen removal for stream overlays", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                     Switch(
                         checked = viewModel.isChromaKeyEnabled.value,
@@ -174,7 +197,7 @@ fun SettingsScreen(viewModel: StreamViewModel, modifier: Modifier = Modifier) {
                 }
             }
 
-            // Phase 17 — Controlled Downsampling Filter A/B/C/D/E Test
+            // Gameplay Color & Visual Enhancer
             Card(
                 colors = CardDefaults.cardColors(
                     containerColor = MaterialTheme.colorScheme.surfaceVariant
@@ -183,90 +206,6 @@ fun SettingsScreen(viewModel: StreamViewModel, modifier: Modifier = Modifier) {
                 modifier = Modifier.fillMaxWidth().padding(bottom = 24.dp)
             ) {
                 Column(modifier = Modifier.padding(24.dp)) {
-                    Text(
-                        "🔬 Phase 17 Downsampling Filter Test",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.padding(bottom = 12.dp)
-                    )
-
-                    Text(
-                        "Select Downsampling Mode (2400x1080 -> 1920x864):",
-                        style = MaterialTheme.typography.labelLarge,
-                        color = MaterialTheme.colorScheme.onSurface,
-                        modifier = Modifier.padding(bottom = 8.dp)
-                    )
-
-                    viewModel.downsampleTestModes.forEach { mode ->
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(vertical = 2.dp)
-                        ) {
-                            RadioButton(
-                                selected = viewModel.selectedDownsampleTestMode.value == mode,
-                                onClick = {
-                                    viewModel.selectedDownsampleTestMode.value = mode
-                                    viewModel.saveSettings()
-                                }
-                            )
-                            Text(
-                                text = mode,
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = if (viewModel.selectedDownsampleTestMode.value == mode)
-                                    MaterialTheme.colorScheme.onSurface
-                                else MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(12.dp))
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
-                    Spacer(modifier = Modifier.height(12.dp))
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                "📐 GPU Resolution Test Pattern",
-                                style = MaterialTheme.typography.bodyLarge,
-                                fontWeight = FontWeight.SemiBold,
-                                color = MaterialTheme.colorScheme.onSurface
-                            )
-                            Text(
-                                "Procedural 1px/2px/Nyquist/diagonal pattern directly on GPU (Step 3)",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                        Switch(
-                            checked = viewModel.isTestPatternEnabled.value,
-                            onCheckedChange = {
-                                viewModel.isTestPatternEnabled.value = it
-                                viewModel.saveSettings()
-                            }
-                        )
-                    }
-                }
-            }
-
-            // ==========================================
-            // FILTER SETTINGS SECTION (Phase 18C Clean Layout)
-            // ==========================================
-            Card(
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.surfaceVariant
-                ),
-                shape = RoundedCornerShape(24.dp),
-                modifier = Modifier.fillMaxWidth().padding(bottom = 24.dp)
-            ) {
-                Column(modifier = Modifier.padding(24.dp)) {
-                    // Header with Enable Filter ON / OFF Switch
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically,
@@ -274,15 +213,15 @@ fun SettingsScreen(viewModel: StreamViewModel, modifier: Modifier = Modifier) {
                     ) {
                         Column(modifier = Modifier.weight(1f).padding(end = 16.dp)) {
                             Text(
-                                "FILTER SETTINGS",
+                                "Gameplay Color Enhancer",
                                 style = MaterialTheme.typography.titleMedium,
                                 fontWeight = FontWeight.Bold,
                                 color = MaterialTheme.colorScheme.primary
                             )
                             Text(
-                                "Enable Filter",
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurface
+                                "Hardware GPU color grading & sharpness",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
                         Switch(
@@ -296,84 +235,6 @@ fun SettingsScreen(viewModel: StreamViewModel, modifier: Modifier = Modifier) {
 
                     val isEnabled = viewModel.isGameplayFilterEnabled.value
 
-                    if (com.example.bgmistreamer.BuildConfig.DEBUG && isEnabled) {
-                        Spacer(modifier = Modifier.height(12.dp))
-                        Card(
-                            colors = CardDefaults.cardColors(
-                                containerColor = if (viewModel.isExtremeFilterTestEnabled.value)
-                                    MaterialTheme.colorScheme.errorContainer
-                                else MaterialTheme.colorScheme.surface.copy(alpha = 0.6f)
-                            ),
-                            shape = RoundedCornerShape(14.dp),
-                            modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)
-                        ) {
-                            Column(modifier = Modifier.fillMaxWidth().padding(14.dp)) {
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.SpaceBetween
-                                ) {
-                                    Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
-                                        Text(
-                                            "🧪 FORENSIC PROOF TEST (Extreme)",
-                                            style = MaterialTheme.typography.titleSmall,
-                                            fontWeight = FontWeight.Bold,
-                                            color = if (viewModel.isExtremeFilterTestEnabled.value)
-                                                MaterialTheme.colorScheme.onErrorContainer
-                                            else MaterialTheme.colorScheme.primary
-                                        )
-                                        Text(
-                                            "Hard-codes gameplay region to solid proof color to verify active encoder render path in YouTube.",
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = if (viewModel.isExtremeFilterTestEnabled.value)
-                                                MaterialTheme.colorScheme.onErrorContainer.copy(alpha = 0.8f)
-                                            else MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
-                                    }
-                                    Switch(
-                                        checked = viewModel.isExtremeFilterTestEnabled.value,
-                                        onCheckedChange = {
-                                            viewModel.isExtremeFilterTestEnabled.value = it
-                                            viewModel.onFilterChanged()
-                                        }
-                                    )
-                                }
-
-                                if (viewModel.isExtremeFilterTestEnabled.value) {
-                                    Spacer(modifier = Modifier.height(12.dp))
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                    ) {
-                                        val modes = listOf(1 to "TEST 1 (RED)", 2 to "TEST 2 (BLUE)", 3 to "TEST 3 (GREEN)")
-                                        modes.forEach { (idx, label) ->
-                                            val isSelected = viewModel.extremeFilterTestIndex.value == idx
-                                            FilledTonalButton(
-                                                onClick = {
-                                                    viewModel.extremeFilterTestIndex.value = idx
-                                                    viewModel.onFilterChanged()
-                                                },
-                                                colors = ButtonDefaults.filledTonalButtonColors(
-                                                    containerColor = if (isSelected) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.surfaceVariant
-                                                ),
-                                                shape = RoundedCornerShape(10.dp),
-                                                modifier = Modifier.weight(1f).height(38.dp),
-                                                contentPadding = PaddingValues(horizontal = 4.dp, vertical = 2.dp)
-                                            ) {
-                                                Text(
-                                                    label,
-                                                    style = MaterialTheme.typography.labelSmall,
-                                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                                                    color = if (isSelected) MaterialTheme.colorScheme.onError else MaterialTheme.colorScheme.onSurfaceVariant
-                                                )
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -381,7 +242,7 @@ fun SettingsScreen(viewModel: StreamViewModel, modifier: Modifier = Modifier) {
                     ) {
                         // Section: Color
                         Text(
-                            "Color",
+                            "Color Tuning",
                             style = MaterialTheme.typography.titleSmall,
                             fontWeight = FontWeight.Bold,
                             color = if (isEnabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
@@ -414,7 +275,7 @@ fun SettingsScreen(viewModel: StreamViewModel, modifier: Modifier = Modifier) {
                                 viewModel.onFilterChanged()
                             },
                             valueRange = 0.0f..0.40f,
-                            enabled = isEnabled && !viewModel.isExtremeFilterTestEnabled.value,
+                            enabled = isEnabled,
                             modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)
                         )
 
@@ -444,7 +305,7 @@ fun SettingsScreen(viewModel: StreamViewModel, modifier: Modifier = Modifier) {
                                 viewModel.onFilterChanged()
                             },
                             valueRange = -0.10f..0.20f,
-                            enabled = isEnabled && !viewModel.isExtremeFilterTestEnabled.value,
+                            enabled = isEnabled,
                             modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)
                         )
 
@@ -474,7 +335,7 @@ fun SettingsScreen(viewModel: StreamViewModel, modifier: Modifier = Modifier) {
                                 viewModel.onFilterChanged()
                             },
                             valueRange = -0.05f..0.05f,
-                            enabled = isEnabled && !viewModel.isExtremeFilterTestEnabled.value,
+                            enabled = isEnabled,
                             modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)
                         )
 
@@ -504,7 +365,7 @@ fun SettingsScreen(viewModel: StreamViewModel, modifier: Modifier = Modifier) {
                                 viewModel.onFilterChanged()
                             },
                             valueRange = 0.50f..1.50f,
-                            enabled = isEnabled && !viewModel.isExtremeFilterTestEnabled.value,
+                            enabled = isEnabled,
                             modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)
                         )
 
@@ -543,7 +404,7 @@ fun SettingsScreen(viewModel: StreamViewModel, modifier: Modifier = Modifier) {
                                 viewModel.onFilterChanged()
                             },
                             valueRange = 0.0f..1.0f,
-                            enabled = isEnabled && !viewModel.isExtremeFilterTestEnabled.value,
+                            enabled = isEnabled,
                             modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)
                         )
 
@@ -635,14 +496,56 @@ fun SettingsScreen(viewModel: StreamViewModel, modifier: Modifier = Modifier) {
             ) {
                 Column(modifier = Modifier.padding(24.dp)) {
                     Text(
-                        "🎙️ Audio Processing Filters",
+                        "🎙️ Microphone Volume & Audio Filters",
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Bold,
                         color = MaterialTheme.colorScheme.primary,
                         modifier = Modifier.padding(bottom = 16.dp)
                     )
 
-                    // 1. Noise Suppression
+                    // 1. Microphone Volume Slider
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            "Microphone Volume",
+                            style = MaterialTheme.typography.bodyLarge,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Text(
+                            "${viewModel.micVolumePercent.value.toInt()}%",
+                            style = MaterialTheme.typography.bodyLarge,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.primary,
+                            fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
+                        )
+                    }
+                    Slider(
+                        value = viewModel.micVolumePercent.value,
+                        onValueChange = {
+                            viewModel.updateMicVolume(it.toInt().toFloat())
+                        },
+                        valueRange = 0f..200f,
+                        steps = 39, // 5% step intervals (0, 5, 10, ... 200)
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text("0% (Silent)", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text("80% (Default)", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text("100% (1.0x)", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text("200% (2.0x)", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+
+                    Spacer(modifier = Modifier.height(16.dp))
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    // 2. Noise Suppression
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically,
@@ -660,6 +563,7 @@ fun SettingsScreen(viewModel: StreamViewModel, modifier: Modifier = Modifier) {
                                 if (StreamService.isStreamingState.value) {
                                     val intent = Intent(context, StreamService::class.java).apply {
                                         action = "UPDATE_AUDIO_SETTINGS"
+                                        putExtra("micVolumePercent", viewModel.micVolumePercent.value)
                                         putExtra("noiseSuppressor", it)
                                         putExtra("echoCanceler", viewModel.isEchoCancelerEnabled.value)
                                     }
@@ -673,7 +577,7 @@ fun SettingsScreen(viewModel: StreamViewModel, modifier: Modifier = Modifier) {
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
                     Spacer(modifier = Modifier.height(16.dp))
 
-                    // 2. Voice Clarity
+                    // 3. Voice Clarity
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically,
@@ -691,6 +595,7 @@ fun SettingsScreen(viewModel: StreamViewModel, modifier: Modifier = Modifier) {
                                 if (StreamService.isStreamingState.value) {
                                     val intent = Intent(context, StreamService::class.java).apply {
                                         action = "UPDATE_AUDIO_SETTINGS"
+                                        putExtra("micVolumePercent", viewModel.micVolumePercent.value)
                                         putExtra("noiseSuppressor", viewModel.isNoiseSuppressorEnabled.value)
                                         putExtra("echoCanceler", it)
                                     }

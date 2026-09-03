@@ -177,6 +177,15 @@ class ImageOverlayFilterRender(
         overlayScaleY = heightPx / canvasHeight
     }
 
+    fun setOverlayRect(rect: OverlayRect, preserveAspect: Boolean = true) {
+        val targetRect = if (preserveAspect && imageBitmapWidth > 0 && imageBitmapHeight > 0) {
+            calculateContentRect(rect, imageBitmapWidth.toFloat(), imageBitmapHeight.toFloat())
+        } else {
+            rect
+        }
+        updateTransform(targetRect.normX, targetRect.normY, targetRect.normWidth, targetRect.normHeight)
+    }
+
     override fun initGlFilter(context: Context) {
         Matrix.setIdentityM(MVPMatrix, 0)
         Matrix.setIdentityM(STMatrix, 0)

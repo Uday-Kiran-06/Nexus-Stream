@@ -26,22 +26,35 @@ class StreamViewModel(application: Application) : AndroidViewModel(application) 
     val rtmpUrl = mutableStateOf(prefs.getString("rtmpUrl", "rtmp://a.rtmp.youtube.com/live2/") ?: "")
     val streamKey = mutableStateOf(prefs.getString("streamKey", "") ?: "")
     
-    val qualities = listOf("720p 30fps", "1080p 60fps (8 Mbps)", "1080p 60fps (10 Mbps)", "1080p 60fps (12 Mbps)", "1440p 60fps", "4K 60fps")
-    val selectedQuality = mutableStateOf(prefs.getString("selectedQuality", qualities[1]) ?: qualities[1])
-    
-    val downsampleTestModes = listOf(
-        "TEST A: Phase 16 Baseline (Linear + Sharpen OFF)",
-        "TEST B: Moderate Sharpness (Linear + Sharpen 0.06)",
-        "TEST C: High Bitrate (10 Mbps + Sharpen 0.06)",
-        "TEST D: Ultra Bitrate (12 Mbps + Sharpen 0.06)",
-        "DIAGNOSTIC: High-Quality GPU Downsample",
-        "DIAGNOSTIC: Nearest Reference"
+    val qualityPresets = listOf(
+        StreamQualityPreset.QUALITY_1080P60_10,
+        StreamQualityPreset.QUALITY_1080P60_8,
+        StreamQualityPreset.QUALITY_720P30
     )
-    val selectedDownsampleTestMode = mutableStateOf(
-        prefs.getString("selectedDownsampleTestMode", downsampleTestModes[0]) ?: downsampleTestModes[0]
-    )
+    val qualities = qualityPresets.map { it.displayLabel }
 
-    // Phase 18, 22 & 24: Gameplay Color & Sharpness Filter
+    val selectedQualityPreset = mutableStateOf(
+        StreamQualityPreset.fromIdOrLabel(
+            prefs.getString("selectedQualityId", null) ?: prefs.getString("selectedQuality", null)
+        )
+    )
+    val selectedQuality = mutableStateOf(selectedQualityPreset.value.displayLabel)
+
+    fun selectQualityPreset(preset: StreamQualityPreset) {
+        selectedQualityPreset.value = preset
+        selectedQuality.value = preset.displayLabel
+        saveSettings()
+    }
+
+    fun selectQualityByLabel(label: String) {
+        val preset = StreamQualityPreset.fromIdOrLabel(label)
+        selectQualityPreset(preset)
+    }
+
+    val isLargeScreenQualityBoostEnabled = mutableStateOf(prefs.getBoolean("largeScreenQualityBoost", false))
+    val micVolumePercent = mutableStateOf(prefs.getFloat("micVolumePercent", 80f).coerceIn(0f, 200f))
+    
+    // Gameplay Color & Sharpness Filter
     companion object {
         const val GAMEPLAY_GAMMA_DEFAULT = 0.16f
         const val GAMEPLAY_CONTRAST_DEFAULT = 0.04f
@@ -51,27 +64,17 @@ class StreamViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     val isGameplayFilterEnabled = mutableStateOf(prefs.getBoolean("isGameplayFilterEnabled", true))
-    val isExtremeFilterTestEnabled = mutableStateOf(false)
-    val extremeFilterTestIndex = mutableStateOf(1)
     val gameplayGamma = mutableStateOf(prefs.getFloat("gameplayGamma", GAMEPLAY_GAMMA_DEFAULT))
     val gameplayContrast = mutableStateOf(prefs.getFloat("gameplayContrast", GAMEPLAY_CONTRAST_DEFAULT))
     val gameplayBrightness = mutableStateOf(prefs.getFloat("gameplayBrightness", GAMEPLAY_BRIGHTNESS_DEFAULT))
     val gameplaySaturation = mutableStateOf(prefs.getFloat("gameplaySaturation", GAMEPLAY_SATURATION_DEFAULT))
     val gameplaySharpness = mutableStateOf(prefs.getFloat("gameplaySharpness", GAMEPLAY_SHARPNESS_DEFAULT))
 
-    val isTestPatternEnabled = mutableStateOf(false)
-
-    val sharpenModes = listOf("OFF (0.00)", "LOW (0.06 - Diagnostic)", "MEDIUM (0.11)")
-    val selectedSharpenMode = mutableStateOf(prefs.getString("selectedSharpenMode", sharpenModes[0]) ?: sharpenModes[0])
-
-    val filterModes = listOf("LINEAR (GL_LINEAR)", "NEAREST (GL_NEAREST - Diagnostic)")
-    val selectedFilterMode = mutableStateOf(prefs.getString("selectedFilterMode", filterModes[0]) ?: filterModes[0])
-
     val isLandscapeOrientation = mutableStateOf(prefs.getBoolean("isLandscapeOrientation", true))
     
     val isChromaKeyEnabled = mutableStateOf(prefs.getBoolean("isChromaKeyEnabled", false))
     
-    // Audio processing filters (Disabled by default so game sound is 100% full and unsuppressed)
+    // Audio processing filters
     val isNoiseSuppressorEnabled = mutableStateOf(prefs.getBoolean("isNoiseSuppressorEnabled", false))
     val isEchoCancelerEnabled = mutableStateOf(prefs.getBoolean("isEchoCancelerEnabled", false))
 
@@ -95,7 +98,6 @@ class StreamViewModel(application: Application) : AndroidViewModel(application) 
 
     fun resetGameplayFilterDefaults() {
         isGameplayFilterEnabled.value = true
-        isExtremeFilterTestEnabled.value = false
         gameplayGamma.value = GAMEPLAY_GAMMA_DEFAULT
         gameplayContrast.value = GAMEPLAY_CONTRAST_DEFAULT
         gameplayBrightness.value = GAMEPLAY_BRIGHTNESS_DEFAULT
@@ -118,21 +120,40 @@ class StreamViewModel(application: Application) : AndroidViewModel(application) 
         prefs.edit().putFloat("gameScreenScale", gameScreenScalePercent.value).apply()
     }
     
+    fun updateMicVolume(percent: Float) {
+        val clamped = percent.coerceIn(0f, 200f)
+        micVolumePercent.value = clamped
+        prefs.edit().putFloat("micVolumePercent", clamped).apply()
+        if (StreamService.isStreamingState.value) {
+            try {
+                val app = getApplication<Application>()
+                val intent = Intent(app, StreamService::class.java).apply {
+                    action = "UPDATE_AUDIO_SETTINGS"
+                    putExtra("micVolumePercent", clamped)
+                    putExtra("noiseSuppressor", isNoiseSuppressorEnabled.value)
+                    putExtra("echoCanceler", isEchoCancelerEnabled.value)
+                }
+                app.startService(intent)
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+    }
+
     fun saveSettings() {
         prefs.edit().apply {
             putString("rtmpUrl", rtmpUrl.value)
             putString("streamKey", streamKey.value)
+            putString("selectedQualityId", selectedQualityPreset.value.id)
             putString("selectedQuality", selectedQuality.value)
-            putString("selectedDownsampleTestMode", selectedDownsampleTestMode.value)
+            putBoolean("largeScreenQualityBoost", isLargeScreenQualityBoostEnabled.value)
+            putFloat("micVolumePercent", micVolumePercent.value)
             putBoolean("isGameplayFilterEnabled", isGameplayFilterEnabled.value)
             putFloat("gameplayGamma", gameplayGamma.value)
             putFloat("gameplayContrast", gameplayContrast.value)
             putFloat("gameplayBrightness", gameplayBrightness.value)
             putFloat("gameplaySaturation", gameplaySaturation.value)
             putFloat("gameplaySharpness", gameplaySharpness.value)
-            putBoolean("isTestPatternEnabled", isTestPatternEnabled.value)
-            putString("selectedSharpenMode", selectedSharpenMode.value)
-            putString("selectedFilterMode", selectedFilterMode.value)
             putBoolean("isLandscapeOrientation", isLandscapeOrientation.value)
             putBoolean("isChromaKeyEnabled", isChromaKeyEnabled.value)
             putBoolean("isNoiseSuppressorEnabled", isNoiseSuppressorEnabled.value)
@@ -213,16 +234,6 @@ class StreamViewModel(application: Application) : AndroidViewModel(application) 
                         chromaKeys[index] = overlay.chromaKey
                     }
 
-                    val sharpenModeParam = when {
-                        selectedSharpenMode.value.contains("LOW", ignoreCase = true) -> "LOW"
-                        selectedSharpenMode.value.contains("MEDIUM", ignoreCase = true) -> "MEDIUM"
-                        else -> "OFF"
-                    }
-                    val filterModeParam = when {
-                        selectedFilterMode.value.contains("NEAREST", ignoreCase = true) -> "NEAREST"
-                        else -> "LINEAR"
-                    }
-
                     putStringArrayListExtra("overlayUris", uris)
                     putExtra("overlayScales", scales)
                     putExtra("overlayX", xPos)
@@ -232,18 +243,14 @@ class StreamViewModel(application: Application) : AndroidViewModel(application) 
                     putExtra("gameScreenScale", gameScreenScalePercent.value)
                     putExtra("gameScreenX", gameScreenXPercent.value)
                     putExtra("gameScreenY", gameScreenYPercent.value)
-                    putExtra("downsampleTestMode", selectedDownsampleTestMode.value)
                     putExtra("isGameplayFilterEnabled", isGameplayFilterEnabled.value)
-                    putExtra("isExtremeTestMode", isExtremeFilterTestEnabled.value)
-                    putExtra("extremeTestModeIndex", extremeFilterTestIndex.value)
+                    putExtra("isLargeScreenQualityBoost", isLargeScreenQualityBoostEnabled.value)
+                    putExtra("micVolumePercent", micVolumePercent.value)
                     putExtra("gameplayGamma", gameplayGamma.value)
                     putExtra("gameplayContrast", gameplayContrast.value)
                     putExtra("gameplayBrightness", gameplayBrightness.value)
                     putExtra("gameplaySaturation", gameplaySaturation.value)
                     putExtra("gameplaySharpness", gameplaySharpness.value)
-                    putExtra("isTestPattern", isTestPatternEnabled.value)
-                    putExtra("sharpenMode", sharpenModeParam)
-                    putExtra("filterMode", filterModeParam)
                 }
                 app.startService(intent)
             } catch (e: Exception) {
